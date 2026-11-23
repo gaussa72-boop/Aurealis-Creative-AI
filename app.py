@@ -58,6 +58,33 @@ def home(): return send_from_directory("frontend","index.html")
 @app.get("/marketplace")
 def marketplace_page(): return send_from_directory("frontend","marketplace.html")
 
+@app.get("/wallet")
+def wallet_page(): return send_from_directory("frontend","wallet.html")
+
+@app.get("/api/wallet")
+def wallet_public_data():
+    address=os.getenv("BITCOIN_WALLET_ADDRESS","bc1q4q7lujkr8mcv9e7suet524uxjfwlaxm7aelq5y").strip()
+    if not re.fullmatch(r"bc1[ac-hj-np-z02-9]{39,59}",address):
+        return jsonify(error="Wallet-Adresse ist nicht korrekt konfiguriert."),503
+    try:
+        r=requests.get("https://mempool.space/api/address/"+address,timeout=12)
+        r.raise_for_status()
+        data=r.json()
+        chain=data.get("chain_stats",{}); pending=data.get("mempool_stats",{})
+        confirmed_received=int(chain.get("funded_txo_sum",0))
+        confirmed_spent=int(chain.get("spent_txo_sum",0))
+        pending_received=int(pending.get("funded_txo_sum",0))
+        pending_spent=int(pending.get("spent_txo_sum",0))
+        txr=requests.get("https://mempool.space/api/address/"+address+"/txs",timeout=12)
+        txr.raise_for_status()
+        txs=txr.json()[:15]
+        history=[{"txid":t.get("txid"),"confirmed":bool(t.get("status",{}).get("confirmed")),"block_time":t.get("status",{}).get("block_time"),"block_height":t.get("status",{}).get("block_height")} for t in txs]
+        return jsonify(address=address,confirmed_received_sats=confirmed_received,confirmed_spent_sats=confirmed_spent,confirmed_balance_sats=confirmed_received-confirmed_spent,pending_received_sats=pending_received,pending_spent_sats=pending_spent,pending_balance_sats=pending_received-pending_spent,tx_count=int(chain.get("tx_count",0)),history=history,source="mempool.space",read_only=True,ownership_verified=False)
+    except requests.RequestException:
+        return jsonify(error="Blockchain-Daten sind momentan nicht erreichbar. Bitte später erneut laden."),502
+    except (ValueError,TypeError,KeyError):
+        return jsonify(error="Die Blockchain-Antwort konnte nicht verarbeitet werden."),502
+
 @app.get("/health")
 def health():
     return jsonify(status="ok",service="AUREALIS OMNIA",openai_configured=bool(API_KEY),superadmin_password_configured=bool(os.getenv("SUPERADMIN_PASSWORD")),database="sqlite-local",live_finance=False)
