@@ -136,8 +136,8 @@ def site_blueprint():
         if "text/html" not in ctype:return jsonify(error="Die URL liefert kein HTML-Dokument."),415
         raw=r.raw.read(1_000_000,decode_content=True).decode(r.encoding or "utf-8",errors="replace")
         title=re.search(r"<title[^>]*>(.*?)</title>",raw,re.I|re.S)
-        links=re.findall(r'<a[^>]+href=["\\']([^"\\']+)["\\']',raw,re.I)
-        headings=re.findall(r"<h([1-3])[^>]*>(.*?)</h\\1>",raw,re.I|re.S)
+        links=re.findall(r"""<a[^>]+href=["']([^"']+)["']""",raw,re.I)
+        headings=re.findall(r"<h([1-3])[^>]*>(.*?)</h\1>",raw,re.I|re.S)
         clean=lambda x: re.sub(r"<[^>]+>"," ",x).replace("&amp;","&").strip()[:180]
         blueprint={"url":url,"title":clean(title.group(1)) if title else urlparse(url).netloc,"http_status":r.status_code,"content_type":ctype,"headings":[clean(x[1]) for x in headings[:30]],"navigation_links":links[:60],"captured_at":datetime.now(timezone.utc).isoformat(),"scope":"Nur Startseite/öffentliches HTML; keine Assets, Unterseiten, Login-Bereiche oder fremden Inhalte kopiert."}
         with db() as c:
