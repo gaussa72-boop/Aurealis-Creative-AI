@@ -1,4 +1,5 @@
 import os, re, json, sqlite3, secrets, ipaddress, socket
+from time import monotonic
 from datetime import datetime, timezone
 from functools import wraps
 from urllib.parse import urlparse
@@ -23,6 +24,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS connectors(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,base_url TEXT NOT NULL,auth_env TEXT,status TEXT DEFAULT 'planned',created_at TEXT);
         CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,url TEXT NOT NULL,owner_confirmed INTEGER,blueprint TEXT,created_at TEXT);
         CREATE TABLE IF NOT EXISTS ip_dossiers(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT,technical_problem TEXT,solution TEXT,prior_art TEXT,status TEXT DEFAULT 'draft',created_at TEXT);
+        CREATE TABLE IF NOT EXISTS inquiries(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,email TEXT NOT NULL,intent TEXT,asset_type TEXT,title TEXT,amount TEXT,message TEXT,status TEXT DEFAULT 'new',created_at TEXT);
         CREATE TABLE IF NOT EXISTS listings(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,kind TEXT,description TEXT,valuation REAL,units REAL,investor_share REAL DEFAULT 70,platform_share REAL DEFAULT 30,status TEXT DEFAULT 'demo-only',created_at TEXT);
         """)
 init_db()
@@ -51,6 +53,9 @@ def safe_public_url(value):
 
 @app.get("/")
 def home(): return send_from_directory("frontend","index.html")
+
+@app.get("/marketplace")
+def marketplace_page(): return send_from_directory("frontend","marketplace.html")
 
 @app.get("/health")
 def health():
@@ -169,6 +174,30 @@ def ip_dossiers():
     vals=[title,str(d.get("description",""))[:5000],str(d.get("technical_problem",""))[:2500],str(d.get("solution",""))[:5000],str(d.get("prior_art",""))[:2500],datetime.now(timezone.utc).isoformat()]
     with db() as c: cur=c.execute("INSERT INTO ip_dossiers(title,description,technical_problem,solution,prior_art,created_at) VALUES(?,?,?,?,?,?)",vals)
     return jsonify(id=cur.lastrowid,ok=True,status="draft",note="Nur internes Erfindungsdossier, keine Patentanmeldung und keine Aussage zur Patentfähigkeit.")
+
+
+
+_inquiry_hits={}
+@app.route("/api/inquiries",methods=["GET","POST"])
+def inquiries():
+    if request.method=="GET":
+        if not session.get("superadmin"): return jsonify(error="Superadmin-Anmeldung erforderlich."),401
+        with db() as c: rows=c.execute("SELECT * FROM inquiries ORDER BY id DESC LIMIT 200").fetchall()
+        return jsonify(items=[dict(x) for x in rows])
+    ip=request.remote_addr or "unknown"; now=monotonic()
+    hits=[t for t in _inquiry_hits.get(ip,[]) if now-t<60]
+    if len(hits)>=5: return jsonify(error="Zu viele Anfragen. Bitte später erneut versuchen."),429
+    hits.append(now); _inquiry_hits[ip]=hits
+    d=request.get_json(silent=True) or {}
+    name=str(d.get("name","")).strip()[:100]; email=str(d.get("email","")).strip()[:180]
+    intent=str(d.get("intent","")).strip()[:40]; asset_type=str(d.get("asset_type","")).strip()[:80]
+    title=str(d.get("title","")).strip()[:180]; amount=str(d.get("amount","")).strip()[:80]; message=str(d.get("message","")).strip()[:3000]
+    if not name or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email) or not title or not message:
+        return jsonify(error="Bitte Name, gültige E-Mail-Adresse, Titel und Nachricht ausfüllen."),400
+    if intent not in {"verkaufen","kaufen","lizenzieren","partnerschaft"}: return jsonify(error="Ungültige Anfrageart."),400
+    with db() as c:
+        cur=c.execute("INSERT INTO inquiries(name,email,intent,asset_type,title,amount,message,created_at) VALUES(?,?,?,?,?,?,?,?)",(name,email,intent,asset_type,title,amount,message,datetime.now(timezone.utc).isoformat()))
+    return jsonify(ok=True,id=cur.lastrowid,note="Anfrage eingegangen. Es wurde kein Kauf, Verkauf oder Anteilstransfer ausgelöst."),201
 
 @app.route("/api/listings",methods=["GET","POST"])
 @admin
