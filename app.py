@@ -10,7 +10,7 @@ DB=os.getenv("DATABASE_PATH",os.path.join(ROOT,"omnia.sqlite3"))
 app=Flask(__name__,static_folder="frontend")
 app.secret_key=os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE="Lax",SESSION_COOKIE_SECURE=True,MAX_CONTENT_LENGTH=2*1024*1024)
-MODEL=os.getenv("OPENAI_MODEL","gpt-5.6")
+MODEL=os.getenv("OPENAI_MODEL","gpt-6.2-astra")
 API_KEY=os.getenv("OPENAI_API_KEY","").strip()
 
 def db():
@@ -89,12 +89,19 @@ def chat():
     try:
         r=requests.post("https://api.openai.com/v1/responses",headers={"Authorization":"Bearer "+API_KEY,"Content-Type":"application/json"},json=payload,timeout=90)
         if not r.ok: app.logger.error("OpenAI API error %s",r.status_code); return jsonify(error="KI-Anfrage fehlgeschlagen. API-Schlüssel, Modellzugriff und Kontingent prüfen."),502
-        obj=r.json(); texts=[]
+        obj=r.json(); texts=[]; citations=[]
         for item in obj.get("output",[]):
             if item.get("type")=="message":
                 for part in item.get("content",[]):
-                    if part.get("type")=="output_text": texts.append(part.get("text",""))
-        return jsonify(answer="\n".join(texts).strip(),model=obj.get("model",MODEL),response_id=obj.get("id"))
+                    if part.get("type")=="output_text":
+                        texts.append(part.get("text",""))
+                        for ann in part.get("annotations",[]):
+                            if ann.get("type")=="url_citation":
+                                cite=ann.get("url_citation",ann)
+                                url=cite.get("url","")
+                                if url.startswith(("https://","http://")):
+                                    citations.append({"url":url,"title":cite.get("title") or url})
+        return jsonify(answer="\n".join(texts).strip(),citations=citations,model=obj.get("model",MODEL),response_id=obj.get("id"))
     except requests.RequestException: return jsonify(error="Verbindung zum KI-Dienst fehlgeschlagen."),502
 
 @app.route("/api/characters",methods=["GET","POST"])
