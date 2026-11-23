@@ -23,6 +23,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS characters(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,role TEXT,traits TEXT,voice TEXT,background TEXT,created_at TEXT);
         CREATE TABLE IF NOT EXISTS connectors(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,base_url TEXT NOT NULL,auth_env TEXT,status TEXT DEFAULT 'planned',created_at TEXT);
         CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,url TEXT NOT NULL,owner_confirmed INTEGER,blueprint TEXT,created_at TEXT);
+        CREATE TABLE IF NOT EXISTS platform_registry(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,url TEXT NOT NULL,category TEXT,description TEXT,created_at TEXT);
         CREATE TABLE IF NOT EXISTS ip_dossiers(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT,technical_problem TEXT,solution TEXT,prior_art TEXT,status TEXT DEFAULT 'draft',created_at TEXT);
         CREATE TABLE IF NOT EXISTS inquiries(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,email TEXT NOT NULL,intent TEXT,asset_type TEXT,title TEXT,amount TEXT,message TEXT,status TEXT DEFAULT 'new',created_at TEXT);
         CREATE TABLE IF NOT EXISTS listings(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,kind TEXT,description TEXT,valuation REAL,units REAL,investor_share REAL DEFAULT 70,platform_share REAL DEFAULT 30,status TEXT DEFAULT 'demo-only',created_at TEXT);
@@ -162,6 +163,24 @@ def site_blueprint():
 def projects():
     with db() as c: rows=c.execute("SELECT id,name,url,created_at,blueprint FROM projects ORDER BY id DESC").fetchall()
     return jsonify(items=[dict(x) for x in rows])
+
+
+@app.route("/api/platform-registry",methods=["GET","POST"])
+@admin
+def platform_registry():
+    with db() as c:
+        if request.method=="GET":
+            rows=c.execute("SELECT * FROM platform_registry ORDER BY category,name").fetchall()
+            return jsonify(items=[dict(x) for x in rows])
+        d=request.get_json(silent=True) or {}
+        name=str(d.get("name","")).strip()[:120]; url=str(d.get("url","")).strip()[:500]
+        category=str(d.get("category","Weitere Projekte")).strip()[:80]
+        description=str(d.get("description","")).strip()[:500]
+        if not name or not safe_public_url(url): return jsonify(error="Name und gültige öffentliche HTTP(S)-URL erforderlich."),400
+        exists=c.execute("SELECT id FROM platform_registry WHERE url=?",(url,)).fetchone()
+        if exists:return jsonify(error="Diese Website ist bereits registriert."),409
+        cur=c.execute("INSERT INTO platform_registry(name,url,category,description,created_at) VALUES(?,?,?,?,?)",(name,url,category,description,datetime.now(timezone.utc).isoformat()))
+    return jsonify(ok=True,id=cur.lastrowid,status="registered")
 
 @app.route("/api/ip-dossiers",methods=["GET","POST"])
 @admin
