@@ -133,7 +133,9 @@ def mempool_get(path):
 @app.get("/api/mining/overview")
 def mining_overview():
     try:
-        height=int(mempool_get("blocks/tip/height"))
+        tip_response=requests.get("https://mempool.space/api/blocks/tip/height",headers={"User-Agent":"AurealisOmniaBlockMonitor/1.0"},timeout=18)
+        tip_response.raise_for_status()
+        height=int(tip_response.text.strip())
         blocks=mempool_get("blocks/"+str(max(0,height-11)))
         mempool=mempool_get("mempool")
         hashrate=mempool_get("v1/mining/hashrate/1m")
