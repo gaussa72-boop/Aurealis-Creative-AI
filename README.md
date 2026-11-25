@@ -33,3 +33,11 @@ A new modular superadmin console for AI research, authorized website analysis, A
 
 ## Security
 API keys and superadmin credentials must be configured only in Render Environment. Do not expose them in frontend code or Git.
+
+
+## Bitcoin mining and ASIC connection
+- Public Bitcoin block, mempool, transaction, hashrate and mining-pool data are explorer data from mempool.space. They are not proof that this web service mines Bitcoin or earns rewards for the account owner.
+- The wallet exposes a read-only ASIC telemetry bridge at `GET /api/mining/hardware/status`.
+- Configure `MINING_GATEWAY_URL` (HTTPS only) and `MINING_GATEWAY_TOKEN` as protected Render environment variables. The gateway must expose authenticated `GET /api/status` JSON with a `connected` field and optional telemetry such as `hashrate`, `power_w`, `temperature_c`, `pool`, accepted/rejected shares and uptime.
+- The bridge is read-only: it does not configure pools, start/stop miners, sign transactions, custody keys or request payouts. Those capabilities require a separately reviewed, explicitly approved hardware controller and verified pool account.
+- Without both environment variables the endpoint accurately reports `not_configured`; no hardware connection is assumed.
