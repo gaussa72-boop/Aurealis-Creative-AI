@@ -27,7 +27,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS ip_dossiers(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT,technical_problem TEXT,solution TEXT,prior_art TEXT,status TEXT DEFAULT 'draft',created_at TEXT);
         CREATE TABLE IF NOT EXISTS inquiries(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,email TEXT NOT NULL,intent TEXT,asset_type TEXT,title TEXT,amount TEXT,message TEXT,status TEXT DEFAULT 'new',created_at TEXT);
         CREATE TABLE IF NOT EXISTS listings(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,kind TEXT,description TEXT,valuation REAL,units REAL,investor_share REAL DEFAULT 70,platform_share REAL DEFAULT 30,status TEXT DEFAULT 'demo-only',created_at TEXT);
+        CREATE TABLE IF NOT EXISTS tracked_wallets(address TEXT PRIMARY KEY,label TEXT NOT NULL,created_at TEXT NOT NULL);
         """)
+        default_address=os.getenv("BITCOIN_WALLET_ADDRESS","bc1q4q7lujkr8mcv9e7suet524uxjfwlaxm7aelq5y").strip()
+        if re.fullmatch(r"bc1[ac-hj-np-z02-9]{39,59}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}",default_address):
+            c.execute("INSERT OR IGNORE INTO tracked_wallets(address,label,created_at) VALUES(?,?,?)",(default_address,"Hauptwallet",datetime.now(timezone.utc).isoformat()))
 init_db()
 
 def admin(fn):
@@ -61,29 +65,63 @@ def marketplace_page(): return send_from_directory("frontend","marketplace.html"
 @app.get("/wallet")
 def wallet_page(): return send_from_directory("frontend","wallet.html")
 
+def valid_btc_address(address):
+    return bool(re.fullmatch(r"bc1[ac-hj-np-z02-9]{39,59}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}",address))
+
+def fetch_wallet_data(address):
+    r=requests.get("https://mempool.space/api/address/"+address,timeout=15)
+    r.raise_for_status()
+    data=r.json()
+    chain=data.get("chain_stats",{}); pending=data.get("mempool_stats",{})
+    received=int(chain.get("funded_txo_sum",0)); spent=int(chain.get("spent_txo_sum",0))
+    pending_received=int(pending.get("funded_txo_sum",0)); pending_spent=int(pending.get("spent_txo_sum",0))
+    txr=requests.get("https://mempool.space/api/address/"+address+"/txs",timeout=15)
+    txr.raise_for_status()
+    txs=txr.json()[:15]
+    history=[{"txid":t.get("txid"),"confirmed":bool(t.get("status",{}).get("confirmed")),"block_time":t.get("status",{}).get("block_time"),"block_height":t.get("status",{}).get("block_height")} for t in txs]
+    return {"address":address,"confirmed_received_sats":received,"confirmed_spent_sats":spent,"confirmed_balance_sats":received-spent,"pending_received_sats":pending_received,"pending_spent_sats":pending_spent,"pending_balance_sats":pending_received-pending_spent,"tx_count":int(chain.get("tx_count",0)),"history":history,"source":"mempool.space","read_only":True,"ownership_verified":False}
+
 @app.get("/api/wallet")
 def wallet_public_data():
-    address=os.getenv("BITCOIN_WALLET_ADDRESS","bc1q4q7lujkr8mcv9e7suet524uxjfwlaxm7aelq5y").strip()
-    if not re.fullmatch(r"bc1[ac-hj-np-z02-9]{39,59}",address):
-        return jsonify(error="Wallet-Adresse ist nicht korrekt konfiguriert."),503
+    address=request.args.get("address",os.getenv("BITCOIN_WALLET_ADDRESS","bc1q4q7lujkr8mcv9e7suet524uxjfwlaxm7aelq5y")).strip()
+    if not valid_btc_address(address):
+        return jsonify(error="Bitcoin-Adresse ist formal nicht gültig."),400
     try:
-        r=requests.get("https://mempool.space/api/address/"+address,timeout=12)
-        r.raise_for_status()
-        data=r.json()
-        chain=data.get("chain_stats",{}); pending=data.get("mempool_stats",{})
-        confirmed_received=int(chain.get("funded_txo_sum",0))
-        confirmed_spent=int(chain.get("spent_txo_sum",0))
-        pending_received=int(pending.get("funded_txo_sum",0))
-        pending_spent=int(pending.get("spent_txo_sum",0))
-        txr=requests.get("https://mempool.space/api/address/"+address+"/txs",timeout=12)
-        txr.raise_for_status()
-        txs=txr.json()[:15]
-        history=[{"txid":t.get("txid"),"confirmed":bool(t.get("status",{}).get("confirmed")),"block_time":t.get("status",{}).get("block_time"),"block_height":t.get("status",{}).get("block_height")} for t in txs]
-        return jsonify(address=address,confirmed_received_sats=confirmed_received,confirmed_spent_sats=confirmed_spent,confirmed_balance_sats=confirmed_received-confirmed_spent,pending_received_sats=pending_received,pending_spent_sats=pending_spent,pending_balance_sats=pending_received-pending_spent,tx_count=int(chain.get("tx_count",0)),history=history,source="mempool.space",read_only=True,ownership_verified=False)
+        return jsonify(fetch_wallet_data(address))
     except requests.RequestException:
         return jsonify(error="Blockchain-Daten sind momentan nicht erreichbar. Bitte später erneut laden."),502
     except (ValueError,TypeError,KeyError):
         return jsonify(error="Die Blockchain-Antwort konnte nicht verarbeitet werden."),502
+
+@app.route("/api/wallets",methods=["GET","POST"])
+def tracked_wallets():
+    if request.method=="POST":
+        data=request.get_json(silent=True) or {}
+        address=str(data.get("address","")).strip()
+        label=str(data.get("label","")).strip()[:80] or "Wallet"
+        if not valid_btc_address(address):
+            return jsonify(error="Bitte eine gültige Bitcoin-Adresse (bc1…, 1… oder 3…) eingeben."),400
+        try:
+            with db() as c:
+                c.execute("INSERT INTO tracked_wallets(address,label,created_at) VALUES(?,?,?)",(address,label,datetime.now(timezone.utc).isoformat()))
+            return jsonify(ok=True,address=address,label=label),201
+        except sqlite3.IntegrityError:
+            return jsonify(error="Diese Bitcoin-Adresse ist bereits in der Übersicht eingetragen."),409
+    with db() as c:
+        rows=c.execute("SELECT address,label,created_at FROM tracked_wallets ORDER BY created_at ASC").fetchall()
+    items=[]
+    for row in rows:
+        item=dict(row)
+        try:
+            item.update(fetch_wallet_data(item["address"]))
+            item["available"]=True
+        except requests.RequestException:
+            item.update(available=False,error="Blockchain-Daten momentan nicht erreichbar.")
+        except (ValueError,TypeError,KeyError):
+            item.update(available=False,error="Blockchain-Antwort konnte nicht verarbeitet werden.")
+        items.append(item)
+    totals={key:sum(int(x.get(key,0)) for x in items if x.get("available")) for key in ("confirmed_balance_sats","confirmed_received_sats","confirmed_spent_sats","pending_balance_sats")}
+    return jsonify(items=items,totals=totals,source="mempool.space",read_only=True,ownership_verified=False)
 
 @app.get("/health")
 def health():
