@@ -10,6 +10,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 ROOT=os.path.dirname(os.path.abspath(__file__))
 DB=os.getenv("DATABASE_PATH",os.path.join(ROOT,"omnia.sqlite3"))
 app=Flask(__name__,static_folder="frontend")
+
+from agent_bridge import register_agent_bridge
+register_agent_bridge(
+    app,
+    agent_id="aurealis-omnia",
+    display_name="AUREALIS OMNIA",
+    persona="Du bist auf Bitcoin-Blockchain-Daten, Blockanalyse, Mempool, Mining-Pools, Hashrate und ASIC-Telemetrie spezialisiert. Du unterscheidest öffentliche Netzwerkdaten von realen Mining-Rewards.",
+)
 app.secret_key=os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE="Lax",SESSION_COOKIE_SECURE=True,MAX_CONTENT_LENGTH=2*1024*1024)
 MODEL=os.getenv("OPENAI_MODEL","gpt-6.2-astra")
