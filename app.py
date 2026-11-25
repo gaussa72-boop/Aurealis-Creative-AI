@@ -151,6 +151,18 @@ def mining_overview():
         app.logger.warning("Mining overview unavailable: %s",type(e).__name__)
         return jsonify(error="Live-Blockchain-Daten sind momentan nicht erreichbar. Bitte erneut aktualisieren.",source="mempool.space"),502
 
+@app.get("/api/mining/block-height/<int:height>")
+def mining_block_height(height):
+    if height<0 or height>3000000:
+        return jsonify(error="Ungültige Blockhöhe."),400
+    try:
+        block_hash=mempool_get("block-height/"+str(height))
+        if not re.fullmatch(r"[a-fA-F0-9]{64}",str(block_hash)):
+            return jsonify(error="Für diese Blockhöhe wurde kein Block gefunden."),404
+        return jsonify(height=height,block_hash=block_hash)
+    except requests.RequestException:
+        return jsonify(error="Blockhöhe konnte momentan nicht abgefragt werden."),502
+
 @app.get("/api/mining/block/<block_hash>")
 def mining_block_detail(block_hash):
     if not re.fullmatch(r"[a-fA-F0-9]{64}",block_hash):
