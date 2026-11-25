@@ -123,6 +123,78 @@ def tracked_wallets():
     totals={key:sum(int(x.get(key,0)) for x in items if x.get("available")) for key in ("confirmed_balance_sats","confirmed_received_sats","confirmed_spent_sats","pending_balance_sats")}
     return jsonify(items=items,totals=totals,source="mempool.space",read_only=True,ownership_verified=False)
 
+
+_mining_ai_hits={}
+def mempool_get(path):
+    r=requests.get("https://mempool.space/api/"+path.lstrip("/"),headers={"User-Agent":"AurealisOmniaBlockMonitor/1.0"},timeout=18)
+    r.raise_for_status()
+    return r.json()
+
+@app.get("/api/mining/overview")
+def mining_overview():
+    try:
+        height=int(mempool_get("blocks/tip/height"))
+        blocks=mempool_get("blocks/"+str(max(0,height-11)))
+        mempool=mempool_get("mempool")
+        hashrate=mempool_get("v1/mining/hashrate/1m")
+        pools=mempool_get("v1/mining/pools/1m")
+        safe_blocks=[]
+        for b in blocks[:12]:
+            safe_blocks.append({"id":b.get("id"),"height":b.get("height"),"timestamp":b.get("timestamp"),"tx_count":b.get("tx_count"),"size":b.get("size"),"weight":b.get("weight"),"median_fee":b.get("median_fee"),"reward":b.get("extras",{}).get("reward"),"pool":(b.get("extras",{}).get("pool") or {}).get("name","Unbekannter Mining-Pool")})
+        pool_items=[]
+        for p in (pools.get("pools") or [])[:8]:
+            pool_items.append({"name":p.get("name"),"block_count":p.get("blockCount"),"match_rate":p.get("matchRate")})
+        current_hashrate=hashrate.get("currentHashrate")
+        current_difficulty=hashrate.get("currentDifficulty")
+        return jsonify({"tip_height":height,"blocks":safe_blocks,"mempool":{"count":mempool.get("count"),"vsize":mempool.get("vsize"),"total_fee":mempool.get("total_fee")},"mining":{"current_hashrate":current_hashrate,"current_difficulty":current_difficulty,"pools":pool_items},"analysis":{"status":"live","summary":"Die Kennzahlen stammen aus öffentlichen Bitcoin-Netzwerkdaten. Hashrate und Difficulty beschreiben das Gesamtnetzwerk, nicht die Rechenleistung deines Computers oder einen persönlichen Mining-Ertrag."},"source":"mempool.space","read_only":True,"updated_at":datetime.now(timezone.utc).isoformat()})
+    except (requests.RequestException,ValueError,TypeError,KeyError) as e:
+        app.logger.warning("Mining overview unavailable: %s",type(e).__name__)
+        return jsonify(error="Live-Blockchain-Daten sind momentan nicht erreichbar. Bitte erneut aktualisieren.",source="mempool.space"),502
+
+@app.get("/api/mining/block/<block_hash>")
+def mining_block_detail(block_hash):
+    if not re.fullmatch(r"[a-fA-F0-9]{64}",block_hash):
+        return jsonify(error="Ungültiger Block-Hash."),400
+    try:
+        block=mempool_get("block/"+block_hash)
+        txs=mempool_get("block/"+block_hash+"/txs")
+        details=[]
+        for tx in txs[:30]:
+            vin=sum(int(v.get("prevout",{}).get("value",0) or 0) for v in tx.get("vin",[]))
+            vout=sum(int(v.get("value",0) or 0) for v in tx.get("vout",[]))
+            details.append({"txid":tx.get("txid"),"fee":tx.get("fee"),"size":tx.get("size"),"weight":tx.get("weight"),"confirmed":bool(tx.get("status",{}).get("confirmed")),"input_sats":vin,"output_sats":vout})
+        return jsonify({"block":{"id":block.get("id"),"height":block.get("height"),"timestamp":block.get("timestamp"),"tx_count":block.get("tx_count"),"size":block.get("size"),"weight":block.get("weight"),"version":block.get("version"),"nonce":block.get("nonce"),"bits":block.get("bits"),"difficulty":block.get("difficulty"),"merkle_root":block.get("merkle_root"),"previousblockhash":block.get("previousblockhash"),"median_fee":block.get("extras",{}).get("medianFee"),"pool":(block.get("extras",{}).get("pool") or {}).get("name","Unbekannter Mining-Pool"),"reward":block.get("extras",{}).get("reward")},"transactions":details,"transactions_shown":len(details),"note":"Es werden maximal 30 Transaktionen pro Block in der Detailansicht angezeigt; der Explorer-Link öffnet den vollständigen Block."})
+    except requests.RequestException:
+        return jsonify(error="Blockdetails konnten momentan nicht geladen werden."),502
+
+@app.post("/api/mining/ai-analysis")
+def mining_ai_analysis():
+    now=monotonic(); ip=request.remote_addr or "unknown"
+    hits=[t for t in _mining_ai_hits.get(ip,[]) if now-t<60]
+    if len(hits)>=3:
+        return jsonify(error="Bitte warte eine Minute vor der nächsten KI-Analyse."),429
+    hits.append(now); _mining_ai_hits[ip]=hits
+    if not API_KEY:
+        return jsonify(error="Die Mining-KI benötigt OPENAI_API_KEY in den Render-Environment-Variablen. Der Live-Block-Explorer funktioniert unabhängig davon."),503
+    data=request.get_json(silent=True) or {}
+    metrics=data.get("metrics") if isinstance(data.get("metrics"),dict) else {}
+    allowed={"tip_height","blocks","mempool","mining"}
+    metrics={k:metrics[k] for k in allowed if k in metrics}
+    prompt="Analysiere diese aktuellen öffentlichen Bitcoin-Netzwerkdaten auf Deutsch. Erkläre Blockaktivität, Transaktionsstau, Gebühren, Difficulty/Hashrate und Mining-Pools. Trenne Messwerte von Interpretation. Keine Rendite- oder Gewinnversprechen. Sage ausdrücklich, dass es Netzwerkwerte und kein eigenes Mining sind. Daten: "+json.dumps(metrics,ensure_ascii=False)[:14000]
+    try:
+        r=requests.post("https://api.openai.com/v1/responses",headers={"Authorization":"Bearer "+API_KEY,"Content-Type":"application/json"},json={"model":MODEL,"instructions":"Du bist AUREALIS OMNIA Mining Intelligence. Du interpretierst ausschließlich übermittelte öffentliche Bitcoin-Blockchain-Metriken. Erfinde keine Werte. Gib eine kurze, sachliche technische Analyse mit Abschnitt Netzwerkstatus, Blockanalyse, Mining-Leistung des Gesamtnetzwerks und Bedeutung für den Nutzer. Behaupte niemals, dass das Dashboard Bitcoin mined oder dass der Nutzer Mining-Rewards verdient.","input":prompt,"store":False},timeout=45)
+        if not r.ok:
+            app.logger.error("Mining AI API error %s",r.status_code)
+            return jsonify(error="Die KI-Analyse ist derzeit nicht verfügbar. Bitte Modellzugriff und API-Kontingent prüfen."),502
+        obj=r.json(); answer=[]
+        for item in obj.get("output",[]):
+            if item.get("type")=="message":
+                for part in item.get("content",[]):
+                    if part.get("type")=="output_text": answer.append(part.get("text",""))
+        return jsonify(answer="\n".join(answer).strip(),model=obj.get("model",MODEL),generated_at=datetime.now(timezone.utc).isoformat())
+    except requests.RequestException:
+        return jsonify(error="Verbindung zur KI-Analyse fehlgeschlagen."),502
+
 @app.get("/health")
 def health():
     return jsonify(status="ok",service="AUREALIS OMNIA",openai_configured=bool(API_KEY),superadmin_password_configured=bool(os.getenv("SUPERADMIN_PASSWORD")),database="sqlite-local",live_finance=False)
