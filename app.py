@@ -28,6 +28,18 @@ def init_db():
         CREATE TABLE IF NOT EXISTS inquiries(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,email TEXT NOT NULL,intent TEXT,asset_type TEXT,title TEXT,amount TEXT,message TEXT,status TEXT DEFAULT 'new',created_at TEXT);
         CREATE TABLE IF NOT EXISTS listings(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,kind TEXT,description TEXT,valuation REAL,units REAL,investor_share REAL DEFAULT 70,platform_share REAL DEFAULT 30,status TEXT DEFAULT 'demo-only',created_at TEXT);
         CREATE TABLE IF NOT EXISTS tracked_wallets(address TEXT PRIMARY KEY,label TEXT NOT NULL,created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS portfolio_assets(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_type TEXT NOT NULL CHECK(asset_type IN ('crypto','stock')),
+            asset_key TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            name TEXT NOT NULL,
+            quantity REAL NOT NULL DEFAULT 0,
+            average_cost REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'EUR',
+            created_at TEXT NOT NULL,
+            UNIQUE(asset_type,asset_key)
+        );
         """)
         default_address=os.getenv("BITCOIN_WALLET_ADDRESS","bc1q4q7lujkr8mcv9e7suet524uxjfwlaxm7aelq5y").strip()
         if re.fullmatch(r"bc1[ac-hj-np-z02-9]{39,59}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}",default_address):
@@ -208,6 +220,134 @@ def mining_ai_analysis():
         return jsonify(answer="\n".join(answer).strip(),model=obj.get("model",MODEL),generated_at=datetime.now(timezone.utc).isoformat())
     except requests.RequestException:
         return jsonify(error="Verbindung zur KI-Analyse fehlgeschlagen."),502
+
+
+_market_hits={}
+_prediction_hits={}
+def market_json(url,params=None):
+    r=requests.get(url,params=params,headers={"User-Agent":"AurealisOmniaMarkets/1.0"},timeout=18)
+    r.raise_for_status()
+    return r.json()
+
+def yahoo_search(query):
+    data=market_json("https://query1.finance.yahoo.com/v1/finance/search",{"q":query,"quotesCount":12,"newsCount":0})
+    out=[]
+    for q in data.get("quotes",[]):
+        if q.get("quoteType") not in ("EQUITY","ETF","MUTUALFUND","INDEX"):
+            continue
+        out.append({"asset_type":"stock","asset_key":q.get("symbol"),"symbol":q.get("symbol"),"name":q.get("shortname") or q.get("longname") or q.get("symbol"),"exchange":q.get("exchDisp") or q.get("exchange"),"currency":q.get("currency") or "USD"})
+    return out
+
+def yahoo_quote(symbol):
+    safe=str(symbol or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9.^=_-]{1,24}",safe):
+        raise ValueError("Ungültiges Aktiensymbol.")
+    data=market_json("https://query1.finance.yahoo.com/v8/finance/chart/"+safe,{"range":"5d","interval":"1d"})
+    result=(data.get("chart",{}).get("result") or [None])[0]
+    if not result: raise ValueError("Keine Kursdaten für dieses Symbol gefunden.")
+    meta=result.get("meta",{})
+    price=meta.get("regularMarketPrice")
+    if price is None: raise ValueError("Aktueller Kurs nicht verfügbar.")
+    prev=meta.get("chartPreviousClose") or meta.get("previousClose") or price
+    change=(float(price)-float(prev))/float(prev)*100 if prev else 0
+    return {"asset_type":"stock","asset_key":safe,"symbol":safe,"name":meta.get("longName") or meta.get("shortName") or safe,"price":float(price),"currency":meta.get("currency") or "USD","change_24h_pct":change,"exchange":meta.get("exchangeName"),"source":"Yahoo Finance","updated_at":datetime.now(timezone.utc).isoformat()}
+
+@app.get("/api/markets/search")
+def market_search():
+    q=str(request.args.get("q","")).strip()[:80]
+    kind=request.args.get("type","crypto").lower()
+    if len(q)<2:return jsonify(items=[])
+    if kind not in ("crypto","stock"):return jsonify(error="Typ muss crypto oder stock sein."),400
+    try:
+        if kind=="crypto":
+            data=market_json("https://api.coingecko.com/api/v3/search",{"query":q})
+            items=[{"asset_type":"crypto","asset_key":x.get("id"),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"market_cap_rank":x.get("market_cap_rank"),"thumb":x.get("thumb")} for x in data.get("coins",[])[:15]]
+        else:
+            items=yahoo_search(q)
+        return jsonify(items=items,source="CoinGecko" if kind=="crypto" else "Yahoo Finance")
+    except requests.RequestException:
+        return jsonify(error="Marktsuche momentan nicht erreichbar. Bitte später erneut versuchen."),502
+
+@app.get("/api/markets/universe")
+def market_universe():
+    kind=request.args.get("type","crypto").lower()
+    if kind!="crypto":return jsonify(error="Für Aktien nutze die dynamische Symbolsuche; der Aktienmarkt hat keine einheitliche vollständige kostenlose Gesamtliste."),400
+    try:
+        page=max(1,min(4,int(request.args.get("page","1"))))
+        data=market_json("https://api.coingecko.com/api/v3/coins/markets",{"vs_currency":"eur","order":"market_cap_desc","per_page":250,"page":page,"sparkline":"false","price_change_percentage":"24h,7d"})
+        items=[{"asset_type":"crypto","asset_key":x.get("id"),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"price":x.get("current_price"),"currency":"EUR","market_cap":x.get("market_cap"),"rank":x.get("market_cap_rank"),"change_24h_pct":x.get("price_change_percentage_24h"),"change_7d_pct":x.get("price_change_percentage_7d_in_currency"),"image":x.get("image")} for x in data]
+        return jsonify(items=items,page=page,per_page=250,source="CoinGecko",note="Top 1.000 nach Marktkapitalisierung; weitere Coins können über die Suche gefunden werden.")
+    except (requests.RequestException,ValueError):
+        return jsonify(error="Coin-Marktdaten momentan nicht verfügbar."),502
+
+@app.get("/api/markets/quote")
+def market_quote():
+    kind=request.args.get("type","crypto").lower()
+    key=str(request.args.get("id" if kind=="crypto" else "symbol","")).strip()
+    if kind not in ("crypto","stock") or not key:return jsonify(error="Asset-Typ und Kennung erforderlich."),400
+    try:
+        if kind=="crypto":
+            if not re.fullmatch(r"[a-z0-9-]{1,100}",key):return jsonify(error="Ungültige Coin-Kennung."),400
+            data=market_json("https://api.coingecko.com/api/v3/coins/markets",{"vs_currency":"eur","ids":key,"sparkline":"false","price_change_percentage":"24h,7d"})
+            if not data:return jsonify(error="Coin nicht gefunden."),404
+            x=data[0]
+            return jsonify({"asset_type":"crypto","asset_key":x.get("id"),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"price":x.get("current_price"),"currency":"EUR","market_cap":x.get("market_cap"),"volume_24h":x.get("total_volume"),"change_24h_pct":x.get("price_change_percentage_24h"),"change_7d_pct":x.get("price_change_percentage_7d_in_currency"),"source":"CoinGecko","updated_at":datetime.now(timezone.utc).isoformat()})
+        return jsonify(yahoo_quote(key))
+    except ValueError as e:return jsonify(error=str(e)),400
+    except requests.RequestException:return jsonify(error="Kursdaten momentan nicht erreichbar."),502
+
+@app.route("/api/portfolio/assets",methods=["GET","POST"])
+def portfolio_assets():
+    if request.method=="POST":
+        d=request.get_json(silent=True) or {}
+        kind=str(d.get("asset_type","")).lower(); key=str(d.get("asset_key","")).strip().lower() if kind=="crypto" else str(d.get("asset_key","")).strip().upper()
+        symbol=str(d.get("symbol","")).strip().upper()[:24]; name=str(d.get("name","")).strip()[:120]
+        try: qty=float(d.get("quantity",0)); cost=float(d.get("average_cost",0))
+        except (TypeError,ValueError):return jsonify(error="Menge und durchschnittlicher Einstandskurs müssen Zahlen sein."),400
+        currency=str(d.get("currency","EUR")).upper()[:8]
+        if kind not in ("crypto","stock") or not key or len(key)>100 or not symbol or not name or not (0<=qty<1e18) or not (0<=cost<1e18):
+            return jsonify(error="Bitte Asset, gültige Menge und Einstandskurs prüfen."),400
+        try:
+            with db() as c:
+                cur=c.execute("INSERT INTO portfolio_assets(asset_type,asset_key,symbol,name,quantity,average_cost,currency,created_at) VALUES(?,?,?,?,?,?,?,?)",(kind,key,symbol,name,qty,cost,currency,datetime.now(timezone.utc).isoformat()))
+            return jsonify(ok=True,id=cur.lastrowid),201
+        except sqlite3.IntegrityError:return jsonify(error="Dieses Asset ist bereits im gemeinsamen Portfolio. Bitte den bestehenden Eintrag verwalten."),409
+    with db() as c: rows=c.execute("SELECT * FROM portfolio_assets ORDER BY asset_type,name").fetchall()
+    return jsonify(items=[dict(x) for x in rows],shared=True,note="Gemeinsame Portfolioübersicht: Einträge sind für alle Besucher sichtbar.")
+
+@app.delete("/api/portfolio/assets/<int:asset_id>")
+def delete_portfolio_asset(asset_id):
+    with db() as c: cur=c.execute("DELETE FROM portfolio_assets WHERE id=?",(asset_id,))
+    if cur.rowcount==0:return jsonify(error="Eintrag nicht gefunden."),404
+    return jsonify(ok=True,deleted_id=asset_id)
+
+@app.post("/api/markets/prediction")
+def market_prediction():
+    now=monotonic(); ip=request.remote_addr or "unknown"
+    hits=[t for t in _prediction_hits.get(ip,[]) if now-t<60]
+    if len(hits)>=3:return jsonify(error="Bitte warte eine Minute bis zur nächsten Prognose."),429
+    hits.append(now);_prediction_hits[ip]=hits
+    if not API_KEY:return jsonify(error="Für die Vorhersage-KI muss OPENAI_API_KEY in Render Environment gesetzt sein."),503
+    d=request.get_json(silent=True) or {}; assets=d.get("assets") if isinstance(d.get("assets"),list) else []
+    assets=assets[:25]
+    clean=[]
+    for a in assets:
+        if not isinstance(a,dict):continue
+        clean.append({k:a.get(k) for k in ("asset_type","asset_key","symbol","name","price","currency","change_24h_pct","change_7d_pct","market_cap","volume_24h","quantity","average_cost") if k in a})
+    if not clean:return jsonify(error="Keine aktuellen Kursdaten zur Analyse übermittelt."),400
+    prompt="Erstelle auf Deutsch eine vorsichtige, datenbasierte Szenarioanalyse für diese Assets. Bewerte je Asset 1 Woche, 1 Monat und 1 Jahr als bullisches, neutrales und bärisches Szenario, nenne Einflussfaktoren, Unsicherheiten und welche zusätzlichen Daten fehlen. Nutze ausschließlich die übermittelten Messwerte plus allgemeines Wissen; erfinde keine Live-Nachrichten, Kurse oder Wahrscheinlichkeiten. Keine garantierten Kursziele, keine personalisierte Kauf-/Verkaufsempfehlung. Daten (JSON): "+json.dumps(clean,ensure_ascii=False)[:18000]
+    try:
+        r=requests.post("https://api.openai.com/v1/responses",headers={"Authorization":"Bearer "+API_KEY,"Content-Type":"application/json"},json={"model":MODEL,"instructions":"Du bist AUREALIS OMNIA Market Intelligence. Deine Prognosen sind Szenarien, keine Gewissheiten. Trenne aktuelle Marktdaten, Annahmen und Spekulation. Keine Anlageberatung, keine Renditeversprechen, keine erfundenen Daten. Weise auf Volatilität und Totalverlustrisiko hin, insbesondere bei kleinen Coins.","input":prompt,"store":False},timeout=60)
+        if not r.ok:
+            app.logger.error("Market prediction API error %s",r.status_code)
+            return jsonify(error="Vorhersage-KI nicht verfügbar. Bitte API-Schlüssel, Modellzugriff und Kontingent prüfen."),502
+        obj=r.json(); out=[]
+        for item in obj.get("output",[]):
+            if item.get("type")=="message":
+                for part in item.get("content",[]):
+                    if part.get("type")=="output_text":out.append(part.get("text",""))
+        return jsonify(answer="\\n".join(out).strip(),model=obj.get("model",MODEL),generated_at=datetime.now(timezone.utc).isoformat(),kind="scenario_analysis")
+    except requests.RequestException:return jsonify(error="Verbindung zur Vorhersage-KI fehlgeschlagen."),502
 
 @app.get("/health")
 def health():
