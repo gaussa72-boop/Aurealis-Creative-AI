@@ -21,6 +21,12 @@ def db():
 def init_db():
     with db() as c:
         c.executescript("""
+        CREATE TABLE IF NOT EXISTS membership_programs(
+            slug TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS member_profiles(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -77,6 +83,21 @@ def init_db():
         if re.fullmatch(r"bc1[ac-hj-np-z02-9]{39,59}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}",default_address):
             c.execute("INSERT OR IGNORE INTO tracked_wallets(address,label,created_at) VALUES(?,?,?)",(default_address,"Hauptwallet",datetime.now(timezone.utc).isoformat()))
 init_db()
+with db() as c:
+    for program in [
+        ("aurealis-omnia","AUREALIS OMNIA","Bitcoin-, Coin-, Aktien- und KI-Finanzhub"),
+        ("ultima-one","ULTIMA ONE","Zentrale Unternehmens- und Plattformverwaltung"),
+        ("quantum-mirror","Quantum Mirror","KI- und Erlebnisplattform"),
+        ("neuroforge","Neuroforge","Forschungs- und Entwicklungsplattform"),
+        ("ate-rea","ATE REA","Spirituelle Chroniken, Bücher und Community"),
+        ("krypto-aurora","Krypto-Aurora","Krypto-Analyse und Marktübersicht"),
+        ("aurealis-trading","Aurealis Trading","Trading- und Portfolio-Werkzeuge"),
+        ("aurealis-shopping-ai","Aurealis Shopping AI","KI-gestützte Produktsuche"),
+        ("characterverse","Characterverse","Charakter- und Profilwelt"),
+        ("quantum-shield","Quantum Shield","Sicherheits- und Schutzwerkzeuge")
+    ]:
+        c.execute("INSERT OR IGNORE INTO membership_programs(slug,name,description,created_at) VALUES(?,?,?,?)",(*program,datetime.now(timezone.utc).isoformat()))
+
 
 def admin(fn):
     @wraps(fn)
@@ -434,6 +455,10 @@ PROGRAM_CATALOG = [
     {"slug":"characterverse","name":"Characterverse","description":"Charakter- und Profilwelt"},
     {"slug":"quantum-shield","name":"Quantum Shield","description":"Sicherheits- und Schutzwerkzeuge"}
 ]
+def all_programs():
+    with db() as c: rows=c.execute("SELECT slug,name,description FROM membership_programs ORDER BY name").fetchall()
+    return [dict(x) for x in rows]
+
 MEMBERSHIP_PLANS = {
     "global_annual": {"name":"Global Premium", "price":"3000.00", "currency":"USD", "period":"year", "monthly_equivalent":"250.00 USD", "scope":"Alle teilnehmenden Programme"},
     "program_monthly": {"name":"Programm Premium", "price":"10.00", "currency":"EUR", "period":"month", "monthly_equivalent":"10.00 EUR", "scope":"Ein ausgewähltes Programm"},
@@ -455,7 +480,7 @@ def member_required(fn):
 
 @app.get("/api/membership/plans")
 def membership_plans():
-    return jsonify(programs=PROGRAM_CATALOG,plans=MEMBERSHIP_PLANS,
+    return jsonify(programs=all_programs(),plans=MEMBERSHIP_PLANS,
         rules={"mentor":"Lebenslanger Zugang zu allen teilnehmenden Programmen; nur durch Superadmin vergebbar.","member":"Premiumzugang erst nach bestätigter Zahlung und Freigabe.","per_program":"Jedes Programm besitzt eine getrennte Berechtigung."},
         payment_status="manual_review_required",
         note="Es ist noch kein Zahlungsanbieter verbunden. Eine Anfrage aktiviert keinen Premiumzugang automatisch.")
@@ -466,7 +491,7 @@ def membership_register():
     email=str(d.get("email","")).strip().lower()
     name=str(d.get("display_name","")).strip()[:80]
     password=str(d.get("password",""))
-    if not re.fullmatch(r"[^@\\s]{1,100}@[^@\\s]{1,180}\\.[^@\\s]{2,30}",email):return jsonify(error="Bitte eine gültige E-Mail-Adresse eingeben."),400
+    if not re.fullmatch(r"[^@\s]{1,100}@[^@\s]{1,180}\.[^@\s]{2,30}",email):return jsonify(error="Bitte eine gültige E-Mail-Adresse eingeben."),400
     if len(password)<12:return jsonify(error="Das Passwort muss mindestens 12 Zeichen lang sein."),400
     if not name:return jsonify(error="Bitte einen Profilnamen angeben."),400
     try:
@@ -507,7 +532,7 @@ def membership_request(member):
     slug=str(d.get("program_slug","")).strip()
     plan=str(d.get("plan_code","")).strip()
     if plan not in MEMBERSHIP_PLANS:return jsonify(error="Unbekannter Tarif."),400
-    if slug!="all-programs" and slug not in {x["slug"] for x in PROGRAM_CATALOG}:return jsonify(error="Unbekanntes Programm."),400
+    if slug!="all-programs" and slug not in {x["slug"] for x in all_programs()}:return jsonify(error="Unbekanntes Programm."),400
     if plan=="program_monthly" and slug=="all-programs":return jsonify(error="Der Monatstarif gilt für genau ein Programm."),400
     if plan in {"global_annual","global_lifetime"} and slug!="all-programs":return jsonify(error="Dieser Tarif gilt für alle teilnehmenden Programme."),400
     if member["role"]=="mentor":return jsonify(ok=True,note="Mentorstatus: lebenslanger Zugang ist bereits aktiv; kein Abo erforderlich."),200
@@ -519,6 +544,20 @@ def membership_request(member):
             (member["id"],slug,plan,p["price"],p["currency"],datetime.now(timezone.utc).isoformat()))
     return jsonify(ok=True,request_id=cur.lastrowid,status="pending",price=p["price"],currency=p["currency"],
         note="Anfrage gespeichert. Noch keine Zahlung, Abbuchung oder Freischaltung. Zahlungsabwicklung und manuelle Prüfung sind noch nicht verbunden."),201
+
+@app.route("/api/membership/admin/programs",methods=["GET","POST"])
+@admin
+def membership_admin_programs():
+    if request.method=="GET":return jsonify(items=all_programs())
+    d=request.get_json(silent=True) or {}
+    slug=re.sub(r"[^a-z0-9-]+","-",str(d.get("slug","")).strip().lower()).strip("-")[:80]
+    name=str(d.get("name","")).strip()[:120]
+    description=str(d.get("description","")).strip()[:500]
+    if not slug or not name:return jsonify(error="Slug und Programmname sind erforderlich."),400
+    with db() as c:
+        try:c.execute("INSERT INTO membership_programs(slug,name,description,created_at) VALUES(?,?,?,?)",(slug,name,description,datetime.now(timezone.utc).isoformat()))
+        except sqlite3.IntegrityError:return jsonify(error="Dieses Programm ist bereits registriert."),409
+    return jsonify(ok=True,program={"slug":slug,"name":name,"description":description}),201
 
 @app.get("/api/membership/admin/requests")
 @admin
@@ -535,7 +574,6 @@ def membership_admin_approve(request_id):
         if not r:return jsonify(error="Offene Anfrage nicht gefunden."),404
         now=datetime.now(timezone.utc)
         ends=None
-        if r["plan_code"]=="program_monthly":ends=now.replace(year=now.year+1).isoformat() if False else None
         if r["plan_code"]=="program_monthly":
             from datetime import timedelta
             ends=(now+timedelta(days=30)).isoformat()
@@ -544,7 +582,7 @@ def membership_admin_approve(request_id):
             ends=(now+timedelta(days=365)).isoformat()
         c.execute("UPDATE membership_requests SET status='approved' WHERE id=?",(request_id,))
         if r["plan_code"] in {"global_annual","global_lifetime"}:
-            for program in PROGRAM_CATALOG:
+            for program in all_programs():
                 c.execute("INSERT INTO member_entitlements(user_id,program_slug,plan_code,status,starts_at,ends_at,created_at) VALUES(?,?,?,'active',?,?,?) ON CONFLICT(user_id,program_slug) DO UPDATE SET plan_code=excluded.plan_code,status='active',starts_at=excluded.starts_at,ends_at=excluded.ends_at",
                     (r["user_id"],program["slug"],r["plan_code"],now.isoformat(),ends,now.isoformat()))
         else:
