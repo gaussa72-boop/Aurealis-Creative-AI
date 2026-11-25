@@ -193,6 +193,25 @@ def mining_block_detail(block_hash):
     except requests.RequestException:
         return jsonify(error="Blockdetails konnten momentan nicht geladen werden."),502
 
+
+@app.get("/api/mining/transaction/<txid>")
+def mining_transaction_detail(txid):
+    if not re.fullmatch(r"[a-fA-F0-9]{64}",txid):
+        return jsonify(error="Ungültige Transaktions-ID."),400
+    try:
+        tx=mempool_get("tx/"+txid)
+        status=tx.get("status") or {}
+        inputs=[]
+        for v in (tx.get("vin") or [])[:100]:
+            prev=v.get("prevout") or {}
+            inputs.append({"txid":v.get("txid"),"vout":v.get("vout"),"address":prev.get("scriptpubkey_address"),"value_sats":int(prev.get("value",0) or 0),"is_coinbase":bool(v.get("is_coinbase"))})
+        outputs=[]
+        for v in (tx.get("vout") or [])[:100]:
+            outputs.append({"index":v.get("n"),"address":v.get("scriptpubkey_address"),"value_sats":int(v.get("value",0) or 0),"script_type":v.get("scriptpubkey_type")})
+        return jsonify({"txid":tx.get("txid"),"version":tx.get("version"),"locktime":tx.get("locktime"),"size":tx.get("size"),"weight":tx.get("weight"),"fee_sats":tx.get("fee"),"status":{"confirmed":bool(status.get("confirmed")),"block_height":status.get("block_height"),"block_time":status.get("block_time")},"inputs":inputs,"outputs":outputs,"inputs_shown":len(inputs),"outputs_shown":len(outputs),"source":"mempool.space","note":"Eingänge und Ausgänge sind öffentliche Transaktionsdaten. Ein angezeigter Blockreward ist nicht automatisch eine Auszahlung an den Betrachter."})
+    except requests.RequestException:
+        return jsonify(error="Transaktionsdetails sind momentan nicht erreichbar."),502
+
 @app.post("/api/mining/ai-analysis")
 def mining_ai_analysis():
     now=monotonic(); ip=request.remote_addr or "unknown"
