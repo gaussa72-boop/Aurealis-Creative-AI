@@ -5,6 +5,7 @@ from functools import wraps
 from urllib.parse import urlparse
 import requests
 from flask import Flask, request, jsonify, session, send_from_directory
+from werkzeug.security import generate_password_hash, check_password_hash
 
 ROOT=os.path.dirname(os.path.abspath(__file__))
 DB=os.getenv("DATABASE_PATH",os.path.join(ROOT,"omnia.sqlite3"))
@@ -20,6 +21,37 @@ def db():
 def init_db():
     with db() as c:
         c.executescript("""
+        CREATE TABLE IF NOT EXISTS member_profiles(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('member','mentor','admin')),
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS membership_requests(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            program_slug TEXT NOT NULL,
+            plan_code TEXT NOT NULL,
+            price TEXT NOT NULL,
+            currency TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','cancelled')),
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES member_profiles(id)
+        );
+        CREATE TABLE IF NOT EXISTS member_entitlements(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            program_slug TEXT NOT NULL,
+            plan_code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            starts_at TEXT NOT NULL,
+            ends_at TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(user_id,program_slug),
+            FOREIGN KEY(user_id) REFERENCES member_profiles(id)
+        );
         CREATE TABLE IF NOT EXISTS characters(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,role TEXT,traits TEXT,voice TEXT,background TEXT,created_at TEXT);
         CREATE TABLE IF NOT EXISTS connectors(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,base_url TEXT NOT NULL,auth_env TEXT,status TEXT DEFAULT 'planned',created_at TEXT);
         CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,url TEXT NOT NULL,owner_confirmed INTEGER,blueprint TEXT,created_at TEXT);
@@ -387,6 +419,157 @@ def logout(): session.clear(); return jsonify(ok=True)
 @app.get("/api/status")
 def status():
     return jsonify(authenticated=bool(session.get("superadmin")),openai_configured=bool(API_KEY),model=MODEL,web_search="OpenAI Responses API web_search",database="SQLite (lokal; für Produktion PostgreSQL/DATABASE_URL erforderlich)",live_finance_enabled=False)
+
+
+# Membership: each registered program has its own entitlement; mentor access is granted only by the superadmin.
+PROGRAM_CATALOG = [
+    {"slug":"aurealis-omnia","name":"AUREALIS OMNIA","description":"Bitcoin-, Coin-, Aktien- und KI-Finanzhub"},
+    {"slug":"ultima-one","name":"ULTIMA ONE","description":"Zentrale Unternehmens- und Plattformverwaltung"},
+    {"slug":"quantum-mirror","name":"Quantum Mirror","description":"KI- und Erlebnisplattform"},
+    {"slug":"neuroforge","name":"Neuroforge","description":"Forschungs- und Entwicklungsplattform"},
+    {"slug":"ate-rea","name":"ATE REA","description":"Spirituelle Chroniken, Bücher und Community"},
+    {"slug":"krypto-aurora","name":"Krypto-Aurora","description":"Krypto-Analyse und Marktübersicht"},
+    {"slug":"aurealis-trading","name":"Aurealis Trading","description":"Trading- und Portfolio-Werkzeuge"},
+    {"slug":"aurealis-shopping-ai","name":"Aurealis Shopping AI","description":"KI-gestützte Produktsuche"},
+    {"slug":"characterverse","name":"Characterverse","description":"Charakter- und Profilwelt"},
+    {"slug":"quantum-shield","name":"Quantum Shield","description":"Sicherheits- und Schutzwerkzeuge"}
+]
+MEMBERSHIP_PLANS = {
+    "global_annual": {"name":"Global Premium", "price":"3000.00", "currency":"USD", "period":"year", "monthly_equivalent":"250.00 USD", "scope":"Alle teilnehmenden Programme"},
+    "program_monthly": {"name":"Programm Premium", "price":"10.00", "currency":"EUR", "period":"month", "monthly_equivalent":"10.00 EUR", "scope":"Ein ausgewähltes Programm"},
+    "global_lifetime": {"name":"All-Access Lifetime", "price":"333.00", "currency":"EUR", "period":"lifetime", "monthly_equivalent":None, "scope":"Alle teilnehmenden Programme"}
+}
+def current_member():
+    uid=session.get("member_id")
+    if not uid:return None
+    with db() as c: row=c.execute("SELECT id,email,display_name,role,created_at FROM member_profiles WHERE id=?",(uid,)).fetchone()
+    return dict(row) if row else None
+
+def member_required(fn):
+    @wraps(fn)
+    def wrapped(*a,**k):
+        member=current_member()
+        if not member:return jsonify(error="Bitte zuerst ein Profil registrieren oder anmelden."),401
+        return fn(member,*a,**k)
+    return wrapped
+
+@app.get("/api/membership/plans")
+def membership_plans():
+    return jsonify(programs=PROGRAM_CATALOG,plans=MEMBERSHIP_PLANS,
+        rules={"mentor":"Lebenslanger Zugang zu allen teilnehmenden Programmen; nur durch Superadmin vergebbar.","member":"Premiumzugang erst nach bestätigter Zahlung und Freigabe.","per_program":"Jedes Programm besitzt eine getrennte Berechtigung."},
+        payment_status="manual_review_required",
+        note="Es ist noch kein Zahlungsanbieter verbunden. Eine Anfrage aktiviert keinen Premiumzugang automatisch.")
+
+@app.post("/api/membership/register")
+def membership_register():
+    d=request.get_json(silent=True) or {}
+    email=str(d.get("email","")).strip().lower()
+    name=str(d.get("display_name","")).strip()[:80]
+    password=str(d.get("password",""))
+    if not re.fullmatch(r"[^@\\s]{1,100}@[^@\\s]{1,180}\\.[^@\\s]{2,30}",email):return jsonify(error="Bitte eine gültige E-Mail-Adresse eingeben."),400
+    if len(password)<12:return jsonify(error="Das Passwort muss mindestens 12 Zeichen lang sein."),400
+    if not name:return jsonify(error="Bitte einen Profilnamen angeben."),400
+    try:
+        with db() as c:
+            cur=c.execute("INSERT INTO member_profiles(email,password_hash,display_name,role,created_at) VALUES(?,?,?,?,?)",
+                (email,generate_password_hash(password),name,"member",datetime.now(timezone.utc).isoformat()))
+        session["member_id"]=cur.lastrowid
+        return jsonify(ok=True,member=current_member(),note="Profil erstellt. Mentor- und Premiumrechte werden niemals durch Registrierung selbst vergeben."),201
+    except sqlite3.IntegrityError:return jsonify(error="Für diese E-Mail-Adresse besteht bereits ein Profil."),409
+
+@app.post("/api/membership/login")
+def membership_login():
+    d=request.get_json(silent=True) or {}; email=str(d.get("email","")).strip().lower(); password=str(d.get("password",""))
+    with db() as c: row=c.execute("SELECT id,password_hash FROM member_profiles WHERE email=?",(email,)).fetchone()
+    if not row or not check_password_hash(row["password_hash"],password):return jsonify(error="E-Mail oder Passwort ist nicht korrekt."),401
+    session["member_id"]=row["id"]
+    return jsonify(ok=True,member=current_member())
+
+@app.post("/api/membership/logout")
+def membership_logout():
+    session.pop("member_id",None)
+    return jsonify(ok=True)
+
+@app.get("/api/membership/me")
+@member_required
+def membership_me(member):
+    with db() as c:
+        ent=c.execute("SELECT program_slug,plan_code,status,starts_at,ends_at FROM member_entitlements WHERE user_id=? AND status='active'",(member["id"],)).fetchall()
+        reqs=c.execute("SELECT id,program_slug,plan_code,price,currency,status,created_at FROM membership_requests WHERE user_id=? ORDER BY id DESC LIMIT 30",(member["id"],)).fetchall()
+    mentor=member["role"]=="mentor"
+    return jsonify(member=member,mentor_lifetime=mentor,entitlements=[dict(x) for x in ent],requests=[dict(x) for x in reqs],
+        effective_access="all_programs_lifetime" if mentor else "individual_entitlements")
+
+@app.post("/api/membership/request")
+@member_required
+def membership_request(member):
+    d=request.get_json(silent=True) or {}
+    slug=str(d.get("program_slug","")).strip()
+    plan=str(d.get("plan_code","")).strip()
+    if plan not in MEMBERSHIP_PLANS:return jsonify(error="Unbekannter Tarif."),400
+    if slug!="all-programs" and slug not in {x["slug"] for x in PROGRAM_CATALOG}:return jsonify(error="Unbekanntes Programm."),400
+    if plan=="program_monthly" and slug=="all-programs":return jsonify(error="Der Monatstarif gilt für genau ein Programm."),400
+    if plan in {"global_annual","global_lifetime"} and slug!="all-programs":return jsonify(error="Dieser Tarif gilt für alle teilnehmenden Programme."),400
+    if member["role"]=="mentor":return jsonify(ok=True,note="Mentorstatus: lebenslanger Zugang ist bereits aktiv; kein Abo erforderlich."),200
+    p=MEMBERSHIP_PLANS[plan]
+    with db() as c:
+        existing=c.execute("SELECT id FROM membership_requests WHERE user_id=? AND program_slug=? AND plan_code=? AND status='pending'",(member["id"],slug,plan)).fetchone()
+        if existing:return jsonify(error="Für diesen Tarif liegt bereits eine offene Anfrage vor."),409
+        cur=c.execute("INSERT INTO membership_requests(user_id,program_slug,plan_code,price,currency,status,created_at) VALUES(?,?,?,?,?,'pending',?)",
+            (member["id"],slug,plan,p["price"],p["currency"],datetime.now(timezone.utc).isoformat()))
+    return jsonify(ok=True,request_id=cur.lastrowid,status="pending",price=p["price"],currency=p["currency"],
+        note="Anfrage gespeichert. Noch keine Zahlung, Abbuchung oder Freischaltung. Zahlungsabwicklung und manuelle Prüfung sind noch nicht verbunden."),201
+
+@app.get("/api/membership/admin/requests")
+@admin
+def membership_admin_requests():
+    with db() as c:
+        rows=c.execute("SELECT r.*,m.email,m.display_name FROM membership_requests r JOIN member_profiles m ON m.id=r.user_id ORDER BY r.id DESC LIMIT 200").fetchall()
+    return jsonify(items=[dict(x) for x in rows])
+
+@app.post("/api/membership/admin/approve/<int:request_id>")
+@admin
+def membership_admin_approve(request_id):
+    with db() as c:
+        r=c.execute("SELECT * FROM membership_requests WHERE id=? AND status='pending'",(request_id,)).fetchone()
+        if not r:return jsonify(error="Offene Anfrage nicht gefunden."),404
+        now=datetime.now(timezone.utc)
+        ends=None
+        if r["plan_code"]=="program_monthly":ends=now.replace(year=now.year+1).isoformat() if False else None
+        if r["plan_code"]=="program_monthly":
+            from datetime import timedelta
+            ends=(now+timedelta(days=30)).isoformat()
+        elif r["plan_code"]=="global_annual":
+            from datetime import timedelta
+            ends=(now+timedelta(days=365)).isoformat()
+        c.execute("UPDATE membership_requests SET status='approved' WHERE id=?",(request_id,))
+        if r["plan_code"] in {"global_annual","global_lifetime"}:
+            for program in PROGRAM_CATALOG:
+                c.execute("INSERT INTO member_entitlements(user_id,program_slug,plan_code,status,starts_at,ends_at,created_at) VALUES(?,?,?,'active',?,?,?) ON CONFLICT(user_id,program_slug) DO UPDATE SET plan_code=excluded.plan_code,status='active',starts_at=excluded.starts_at,ends_at=excluded.ends_at",
+                    (r["user_id"],program["slug"],r["plan_code"],now.isoformat(),ends,now.isoformat()))
+        else:
+            c.execute("INSERT INTO member_entitlements(user_id,program_slug,plan_code,status,starts_at,ends_at,created_at) VALUES(?,?,?,'active',?,?,?) ON CONFLICT(user_id,program_slug) DO UPDATE SET plan_code=excluded.plan_code,status='active',starts_at=excluded.starts_at,ends_at=excluded.ends_at",
+                (r["user_id"],r["program_slug"],r["plan_code"],now.isoformat(),ends,now.isoformat()))
+    return jsonify(ok=True,status="approved",note="Zugang aktiviert. Vor Freigabe muss die Zahlung außerhalb dieses Systems geprüft worden sein.")
+
+@app.post("/api/membership/admin/mentor/<int:user_id>")
+@admin
+def membership_admin_mentor(user_id):
+    d=request.get_json(silent=True) or {}; action=str(d.get("action","grant"))
+    if action not in {"grant","revoke"}:return jsonify(error="Aktion muss grant oder revoke sein."),400
+    with db() as c:
+        row=c.execute("SELECT id FROM member_profiles WHERE id=?",(user_id,)).fetchone()
+        if not row:return jsonify(error="Profil nicht gefunden."),404
+        role="mentor" if action=="grant" else "member"
+        c.execute("UPDATE member_profiles SET role=? WHERE id=?",(role,user_id))
+        if action=="grant":
+            now=datetime.now(timezone.utc).isoformat()
+            for program in PROGRAM_CATALOG:
+                c.execute("INSERT INTO member_entitlements(user_id,program_slug,plan_code,status,starts_at,ends_at,created_at) VALUES(?,?,?,'active',?,NULL,?) ON CONFLICT(user_id,program_slug) DO UPDATE SET plan_code='mentor_lifetime',status='active',ends_at=NULL",
+                    (user_id,program["slug"],"mentor_lifetime",now,now))
+        else:
+            c.execute("UPDATE member_entitlements SET status='inactive' WHERE user_id=? AND plan_code='mentor_lifetime'",(user_id,))
+    return jsonify(ok=True,role=role,mentor_lifetime=(action=="grant"))
 
 @app.post("/api/chat")
 @admin
