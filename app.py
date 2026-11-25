@@ -218,6 +218,47 @@ def mining_overview():
         app.logger.warning("Mining overview unavailable: %s",type(e).__name__)
         return jsonify(error="Live-Blockchain-Daten sind momentan nicht erreichbar. Bitte erneut aktualisieren.",source="mempool.space"),502
 
+@app.get("/api/mining/hardware/status")
+def mining_hardware_status():
+    """Read-only bridge to a user-operated ASIC gateway; no miner control or wallet signing."""
+    gateway=os.getenv("MINING_GATEWAY_URL","").strip().rstrip("/")
+    token=os.getenv("MINING_GATEWAY_TOKEN","").strip()
+    if not gateway:
+        return jsonify(configured=False,connected=False,status="not_configured",
+                       required_environment=["MINING_GATEWAY_URL","MINING_GATEWAY_TOKEN"],
+                       note="A public blockchain explorer is not an ASIC miner. Connect a user-operated, authenticated HTTPS gateway to report hardware telemetry."),200
+    parsed=urlparse(gateway)
+    if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:
+        return jsonify(configured=False,connected=False,status="invalid_configuration",
+                       error="MINING_GATEWAY_URL must be an HTTPS URL without embedded credentials."),503
+    if not token:
+        return jsonify(configured=False,connected=False,status="missing_gateway_token",
+                       required_environment=["MINING_GATEWAY_TOKEN"]),503
+    try:
+        response=requests.get(gateway+"/api/status",
+            headers={"Authorization":"Bearer "+token,"Accept":"application/json"},
+            timeout=8)
+        response.raise_for_status()
+        payload=response.json()
+        if not isinstance(payload,dict):
+            raise ValueError("invalid_gateway_payload")
+        allowed=("connected","miner","model","hashrate","hashrate_unit","power_w",
+                 "temperature_c","pool","shares_accepted","shares_rejected","uptime_seconds")
+        metrics={key:payload[key] for key in allowed if key in payload}
+        return jsonify(configured=True,connected=bool(payload.get("connected",True)),
+                       status="connected" if payload.get("connected",True) else "disconnected",
+                       hardware=metrics,source="configured_user_gateway",read_only=True,
+                       control_enabled=False,wallet_signing=False,
+                       updated_at=datetime.now(timezone.utc).isoformat()),200
+    except requests.RequestException:
+        app.logger.warning("ASIC gateway unavailable")
+        return jsonify(configured=True,connected=False,status="gateway_unreachable",
+                       error="Der konfigurierte ASIC-Gateway ist nicht erreichbar. URL, TLS, Firewall und Gateway-Logs prüfen."),502
+    except (ValueError,TypeError):
+        return jsonify(configured=True,connected=False,status="invalid_gateway_response",
+                       error="Der ASIC-Gateway lieferte keine gültige JSON-Statusantwort."),502
+
+
 @app.get("/api/mining/block-height/<int:height>")
 def mining_block_height(height):
     if height<0 or height>3000000:
