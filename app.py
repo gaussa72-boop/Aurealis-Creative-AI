@@ -295,7 +295,7 @@ def mining_block_detail(block_hash):
         details=[]
         for tx in txs[:30]:
             if not isinstance(tx,dict): continue
-            vin= sum(int(v.get("prevout",{}).get("value",0) or 0) for v in (tx.get("vin") or []) if isinstance(v,dict))
+            vin= sum(int((v.get("prevout") or {}).get("value",0) or 0) for v in (tx.get("vin") or []) if isinstance(v,dict))
             vout=sum(int(v.get("value",0) or 0) for v in (tx.get("vout") or []) if isinstance(v,dict))
             details.append({"txid":tx.get("txid"),"fee":tx.get("fee"),"size":tx.get("size"),"weight":tx.get("weight"),"confirmed":bool((tx.get("status") or {}).get("confirmed")),"input_sats":vin,"output_sats":vout})
         return jsonify({"block":{"id":block.get("id"),"height":block.get("height"),"timestamp":block.get("timestamp"),"tx_count":block.get("tx_count"),"size":block.get("size"),"weight":block.get("weight"),"version":block.get("version"),"nonce":block.get("nonce"),"bits":block.get("bits"),"difficulty":block.get("difficulty"),"merkle_root":block.get("merkle_root"),"previousblockhash":block.get("previousblockhash"),"median_fee":extras.get("medianFee"),"pool":pool.get("name","Unbekannter Mining-Pool"),"reward":extras.get("reward")},"transactions":details,"transactions_shown":len(details),"note":"Es werden maximal 30 Transaktionen pro Block in der Detailansicht angezeigt; der Explorer-Link öffnet den vollständigen Block."})
