@@ -10,6 +10,8 @@ from app import app
 class MiningHardwareStatusTests(unittest.TestCase):
     def setUp(self):
         self.client = app.test_client()
+        with self.client.session_transaction() as sess:
+            sess["superadmin"] = True
 
     def test_unconfigured_gateway_is_reported_honestly(self):
         with patch.dict(os.environ, {"MINING_GATEWAY_URL": "", "MINING_GATEWAY_TOKEN": ""}):
