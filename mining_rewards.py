@@ -1,7 +1,8 @@
-"""Verified mining-pool rewards and threshold payout orchestration.
+"""OMNIA mining reward ledger.
 
-The app never signs Bitcoin transactions or stores wallet private keys. Pool and payout
-adapters are separately operated HTTPS services configured through Render environment.
+Virtual mining is strictly a simulation and can never create BTC rewards.
+Real rewards are accepted only from a separately authenticated pool adapter.
+PostgreSQL is used when DATABASE_URL is configured; SQLite remains a local fallback.
 """
 import hmac
 import os
@@ -21,12 +22,31 @@ def _https_base(value):
     return parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password
 
 
-def _db_path():
-    return os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "omnia.sqlite3"))
-
-
 def _connect():
-    conn = sqlite3.connect(_db_path(), timeout=10)
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if database_url:
+        if database_url.startswith("postgres://"):
+            database_url = "postgresql://" + database_url[len("postgres://"):]
+        if not database_url.startswith("postgresql://"):
+            raise RuntimeError("DATABASE_URL must use PostgreSQL")
+        import psycopg
+        from psycopg.rows import dict_row
+        conn = psycopg.connect(database_url, connect_timeout=10, row_factory=dict_row)
+        conn.execute("""CREATE TABLE IF NOT EXISTS mining_payouts (
+            settlement_id TEXT PRIMARY KEY,
+            amount_sats BIGINT NOT NULL,
+            address TEXT NOT NULL,
+            status TEXT NOT NULL,
+            txid TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+        conn.commit()
+        return conn
+
+    # Local development fallback only. Render production should set DATABASE_URL.
+    db_path = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "omnia.sqlite3"))
+    conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("""CREATE TABLE IF NOT EXISTS mining_payouts (
         settlement_id TEXT PRIMARY KEY,
@@ -41,20 +61,26 @@ def _connect():
     return conn
 
 
+def _execute(conn, sql, params=()):
+    if conn.__class__.__module__.startswith("psycopg"):
+        sql = sql.replace("?", "%s")
+    return conn.execute(sql, params)
+
+
 def _config():
     pool_url = os.getenv("MINING_POOL_API_URL", "").strip().rstrip("/")
     pool_token = os.getenv("MINING_POOL_API_TOKEN", "").strip()
     payout_url = os.getenv("MINING_PAYOUT_GATEWAY_URL", "").strip().rstrip("/")
     payout_token = os.getenv("MINING_PAYOUT_GATEWAY_TOKEN", "").strip()
     address = os.getenv("MINING_PAYOUT_ADDRESS", "").strip()
-    # User policy: pay every newly confirmed reward batch; no 3 BTC threshold.
     threshold = 1
     return {
+        "pool_mode": os.getenv("MINING_POOL_MODE", "internal").strip().lower(),
         "pool_configured": _https_base(pool_url) and bool(pool_token),
         "payout_gateway_configured": _https_base(payout_url) and bool(payout_token),
         "payout_address_configured": bool(BTC_ADDRESS_RE.fullmatch(address)),
         "auto_payout_enabled": os.getenv("MINING_AUTO_PAYOUT_ENABLED", "false").lower() == "true",
-        "threshold_sats": max(1, threshold),
+        "threshold_sats": threshold,
         "pool_url": pool_url,
         "pool_token": pool_token,
         "payout_url": payout_url,
@@ -73,16 +99,12 @@ def _pool_rewards(cfg):
     data = response.json()
     if not isinstance(data, dict):
         raise ValueError("invalid_pool_response")
-    confirmed = data.get("confirmed_sats")
-    pending = data.get("pending_sats", 0)
-    blocks = data.get("blocks_found", 0)
+    confirmed, pending, blocks = data.get("confirmed_sats"), data.get("pending_sats", 0), data.get("blocks_found", 0)
     settlement_id = data.get("settlement_id")
     if any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in (confirmed, pending, blocks)):
         raise ValueError("invalid_pool_reward_fields")
     return {
-        "confirmed_sats": confirmed,
-        "pending_sats": pending,
-        "blocks_found": blocks,
+        "confirmed_sats": confirmed, "pending_sats": pending, "blocks_found": blocks,
         "settlement_id": str(settlement_id)[:160] if settlement_id else None,
         "blocks": data.get("blocks", []) if isinstance(data.get("blocks", []), list) else [],
         "source": "configured_mining_pool",
@@ -92,13 +114,8 @@ def _pool_rewards(cfg):
 def register_mining_rewards(app):
     @app.before_request
     def mining_ai_owner_only():
-        protected = (
-            request.path == "/wallet"
-            or request.path.startswith("/api/mining/")
-        )
+        protected = request.path == "/wallet" or request.path.startswith("/api/mining/")
         if request.path == "/api/mining/rewards/settle":
-            # The trusted scheduled payout worker may call this one endpoint using
-            # the cron token; browser and agent access remains superadmin-only.
             expected = os.getenv("MINING_CRON_TOKEN", "").strip()
             supplied = request.headers.get("X-MINING-CRON-TOKEN", "").strip()
             if not expected or not supplied or not hmac.compare_digest(expected, supplied):
@@ -111,9 +128,19 @@ def register_mining_rewards(app):
     def mining_rewards_status():
         cfg = _config()
         public_config = {k: cfg[k] for k in (
-            "pool_configured", "payout_gateway_configured", "payout_address_configured",
-            "auto_payout_enabled", "threshold_sats"
+            "pool_mode", "pool_configured", "payout_gateway_configured",
+            "payout_address_configured", "auto_payout_enabled", "threshold_sats"
         )}
+        # Internal pool is intentionally a virtual/demo ledger: never mint or infer sats.
+        if cfg["pool_mode"] == "internal":
+            return jsonify(
+                status="internal_simulation", personal_rewards_verified=False,
+                found_blocks=None, confirmed_sats=0, pending_sats=0,
+                payout_threshold_reached=False, payout_ready=False,
+                real_mining_rewards_sats=0, bitcoin_payout_eligible=False,
+                configuration=public_config,
+                message="Interner virtueller Mining-Modus: keine realen SHA-256-Hashes, Pool-Shares oder Bitcoin-Erträge."
+            ), 200
         if not cfg["pool_configured"]:
             return jsonify(status="not_configured", personal_rewards_verified=False,
                            found_blocks=None, confirmed_sats=None, pending_sats=None,
@@ -121,12 +148,11 @@ def register_mining_rewards(app):
                            required_environment=["MINING_POOL_API_URL", "MINING_POOL_API_TOKEN"]), 200
         try:
             rewards = _pool_rewards(cfg)
-            ready = (cfg["payout_gateway_configured"] and cfg["payout_address_configured"]
-                     and cfg["auto_payout_enabled"])
+            ready = cfg["payout_gateway_configured"] and cfg["payout_address_configured"] and cfg["auto_payout_enabled"]
             rewards.update(status="connected", personal_rewards_verified=True,
                            payout_threshold_reached=rewards["confirmed_sats"] >= cfg["threshold_sats"],
-                           payout_policy="every_confirmed_reward_batch",
-                           payout_ready=ready, configuration=public_config)
+                           payout_policy="every_confirmed_reward_batch", payout_ready=ready,
+                           configuration=public_config)
             return jsonify(rewards), 200
         except requests.RequestException:
             return jsonify(status="pool_unreachable", personal_rewards_verified=False,
@@ -142,6 +168,8 @@ def register_mining_rewards(app):
         supplied = request.headers.get("X-MINING-CRON-TOKEN", "").strip()
         if not expected or not supplied or not hmac.compare_digest(expected, supplied):
             return jsonify(error="cron_authentication_required"), 401
+        if cfg["pool_mode"] == "internal":
+            return jsonify(status="disabled", error="Interne Simulation erzeugt keine auszahlbaren Bitcoin-Erträge."), 409
         if not cfg["auto_payout_enabled"]:
             return jsonify(status="disabled", error="Automatische Auszahlung ist nicht freigegeben."), 409
         if not (cfg["pool_configured"] and cfg["payout_gateway_configured"] and cfg["payout_address_configured"]):
@@ -152,28 +180,28 @@ def register_mining_rewards(app):
             return jsonify(status="pool_unreachable"), 502
         except (ValueError, TypeError):
             return jsonify(status="invalid_pool_response"), 502
-        amount = rewards["confirmed_sats"]
-        if amount < 1:
-            return jsonify(status="below_threshold", confirmed_sats=amount,
-                           threshold_sats=cfg["threshold_sats"]), 200
-        settlement_id = rewards.get("settlement_id")
+        amount, settlement_id = rewards["confirmed_sats"], rewards.get("settlement_id")
+        if amount < cfg["threshold_sats"]:
+            return jsonify(status="below_threshold", confirmed_sats=amount, threshold_sats=cfg["threshold_sats"]), 200
         if not settlement_id:
-            return jsonify(status="missing_settlement_id",
-                           error="Pool muss eine stabile settlement_id für idempotente Auszahlungen liefern."), 502
+            return jsonify(status="missing_settlement_id", error="Pool muss eine stabile settlement_id liefern."), 502
+
         now = datetime.now(timezone.utc).isoformat()
         conn = _connect()
         try:
-            existing = conn.execute("SELECT * FROM mining_payouts WHERE settlement_id=?", (settlement_id,)).fetchone()
+            existing = _execute(conn, "SELECT * FROM mining_payouts WHERE settlement_id=?", (settlement_id,)).fetchone()
             if existing and existing["status"] == "submitted":
                 return jsonify(status="already_submitted", settlement_id=settlement_id,
                                txid=existing["txid"], amount_sats=existing["amount_sats"]), 200
-            conn.execute("""INSERT INTO mining_payouts(settlement_id,amount_sats,address,status,created_at,updated_at)
+            _execute(conn, """INSERT INTO mining_payouts(settlement_id,amount_sats,address,status,created_at,updated_at)
                 VALUES(?,?,?,?,?,?) ON CONFLICT(settlement_id) DO UPDATE SET
                 amount_sats=excluded.amount_sats,address=excluded.address,status='processing',updated_at=excluded.updated_at""",
                 (settlement_id, amount, cfg["address"], "processing", now, now))
             conn.commit()
         finally:
             conn.close()
+
+        # No provider has been selected/configured yet. This adapter remains fail-closed.
         try:
             response = requests.post(
                 cfg["payout_url"] + "/api/payouts",
@@ -184,14 +212,13 @@ def register_mining_rewards(app):
             )
             response.raise_for_status()
             result = response.json()
-            txid = result.get("txid") if isinstance(result, dict) else None
-            status = result.get("status") if isinstance(result, dict) else None
+            txid, status = (result.get("txid"), result.get("status")) if isinstance(result, dict) else (None, None)
             if status not in ("submitted", "broadcast", "confirmed") or not isinstance(txid, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", txid):
                 raise ValueError("payout_gateway_did_not_return_verified_txid")
             conn = _connect()
             try:
-                conn.execute("UPDATE mining_payouts SET status='submitted',txid=?,updated_at=? WHERE settlement_id=?",
-                             (txid, datetime.now(timezone.utc).isoformat(), settlement_id))
+                _execute(conn, "UPDATE mining_payouts SET status='submitted',txid=?,updated_at=? WHERE settlement_id=?",
+                         (txid, datetime.now(timezone.utc).isoformat(), settlement_id))
                 conn.commit()
             finally:
                 conn.close()
@@ -199,11 +226,11 @@ def register_mining_rewards(app):
         except (requests.RequestException, ValueError):
             conn = _connect()
             try:
-                conn.execute("UPDATE mining_payouts SET status='retryable_error',updated_at=? WHERE settlement_id=?",
-                             (datetime.now(timezone.utc).isoformat(), settlement_id))
+                _execute(conn, "UPDATE mining_payouts SET status='retryable_error',updated_at=? WHERE settlement_id=?",
+                         (datetime.now(timezone.utc).isoformat(), settlement_id))
                 conn.commit()
             finally:
                 conn.close()
             return jsonify(status="payout_failed_or_unverified",
-                           error="Auszahlung nicht als erfolgreich bestätigt. Derselbe Idempotency-Key wird bei Wiederholung verwendet.",
+                           error="Auszahlung nicht als erfolgreich bestätigt; Idempotency-Key bleibt erhalten.",
                            settlement_id=settlement_id), 502
