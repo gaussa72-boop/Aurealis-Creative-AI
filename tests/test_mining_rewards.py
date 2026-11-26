@@ -23,9 +23,8 @@ class MiningRewardsTests(unittest.TestCase):
             sess["superadmin"] = True
 
     def test_mining_access_is_denied_without_superadmin(self):
-        with self.client.session_transaction() as sess:
-            sess.clear()
-        response = self.client.get("/api/mining/rewards")
+        anonymous_client = self.app.test_client()
+        response = anonymous_client.get("/api/mining/rewards")
         self.assertEqual(response.status_code, 403)
 
     def test_unconfigured_pool_never_claims_rewards(self):
