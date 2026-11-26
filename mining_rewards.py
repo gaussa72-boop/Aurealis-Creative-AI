@@ -95,7 +95,6 @@ def register_mining_rewards(app):
         protected = (
             request.path == "/wallet"
             or request.path.startswith("/api/mining/")
-            or request.path.startswith("/api/agent/")
         )
         if request.path == "/api/mining/rewards/settle":
             # The trusted scheduled payout worker may call this one endpoint using
