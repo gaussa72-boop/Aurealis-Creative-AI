@@ -286,15 +286,24 @@ def mining_block_detail(block_hash):
     try:
         block=mempool_get("block/"+block_hash)
         txs=mempool_get("block/"+block_hash+"/txs")
+        if not isinstance(block,dict):
+            return jsonify(error="Der Blockdienst lieferte ungültige Blockdaten."),502
+        if isinstance(txs,dict): txs=txs.get("txs") or []
+        if not isinstance(txs,list): txs=[]
+        extras=block.get("extras") or {}
+        pool=extras.get("pool") or {}
         details=[]
         for tx in txs[:30]:
-            vin=sum(int(v.get("prevout",{}).get("value",0) or 0) for v in tx.get("vin",[]))
-            vout=sum(int(v.get("value",0) or 0) for v in tx.get("vout",[]))
-            details.append({"txid":tx.get("txid"),"fee":tx.get("fee"),"size":tx.get("size"),"weight":tx.get("weight"),"confirmed":bool(tx.get("status",{}).get("confirmed")),"input_sats":vin,"output_sats":vout})
-        return jsonify({"block":{"id":block.get("id"),"height":block.get("height"),"timestamp":block.get("timestamp"),"tx_count":block.get("tx_count"),"size":block.get("size"),"weight":block.get("weight"),"version":block.get("version"),"nonce":block.get("nonce"),"bits":block.get("bits"),"difficulty":block.get("difficulty"),"merkle_root":block.get("merkle_root"),"previousblockhash":block.get("previousblockhash"),"median_fee":block.get("extras",{}).get("medianFee"),"pool":(block.get("extras",{}).get("pool") or {}).get("name","Unbekannter Mining-Pool"),"reward":block.get("extras",{}).get("reward")},"transactions":details,"transactions_shown":len(details),"note":"Es werden maximal 30 Transaktionen pro Block in der Detailansicht angezeigt; der Explorer-Link öffnet den vollständigen Block."})
+            if not isinstance(tx,dict): continue
+            vin= sum(int(v.get("prevout",{}).get("value",0) or 0) for v in (tx.get("vin") or []) if isinstance(v,dict))
+            vout=sum(int(v.get("value",0) or 0) for v in (tx.get("vout") or []) if isinstance(v,dict))
+            details.append({"txid":tx.get("txid"),"fee":tx.get("fee"),"size":tx.get("size"),"weight":tx.get("weight"),"confirmed":bool((tx.get("status") or {}).get("confirmed")),"input_sats":vin,"output_sats":vout})
+        return jsonify({"block":{"id":block.get("id"),"height":block.get("height"),"timestamp":block.get("timestamp"),"tx_count":block.get("tx_count"),"size":block.get("size"),"weight":block.get("weight"),"version":block.get("version"),"nonce":block.get("nonce"),"bits":block.get("bits"),"difficulty":block.get("difficulty"),"merkle_root":block.get("merkle_root"),"previousblockhash":block.get("previousblockhash"),"median_fee":extras.get("medianFee"),"pool":pool.get("name","Unbekannter Mining-Pool"),"reward":extras.get("reward")},"transactions":details,"transactions_shown":len(details),"note":"Es werden maximal 30 Transaktionen pro Block in der Detailansicht angezeigt; der Explorer-Link öffnet den vollständigen Block."})
     except requests.RequestException:
         return jsonify(error="Blockdetails konnten momentan nicht geladen werden."),502
-
+    except (ValueError,TypeError,KeyError,AttributeError):
+        app.logger.exception("Invalid Bitcoin block detail payload")
+        return jsonify(error="Die Blockdaten konnten nicht vollständig verarbeitet werden."),502
 
 @app.get("/api/mining/transaction/<txid>")
 def mining_transaction_detail(txid):
