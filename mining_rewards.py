@@ -47,7 +47,8 @@ def _config():
     payout_url = os.getenv("MINING_PAYOUT_GATEWAY_URL", "").strip().rstrip("/")
     payout_token = os.getenv("MINING_PAYOUT_GATEWAY_TOKEN", "").strip()
     address = os.getenv("MINING_PAYOUT_ADDRESS", "").strip()
-    # User policy: pay every newly confirmed reward batch; no 3 BTC threshold.\n    threshold = 1
+    # User policy: pay every newly confirmed reward batch; no 3 BTC threshold.
+    threshold = 1
     return {
         "pool_configured": _https_base(pool_url) and bool(pool_token),
         "payout_gateway_configured": _https_base(payout_url) and bool(payout_token),
@@ -106,7 +107,8 @@ def register_mining_rewards(app):
             ready = (cfg["payout_gateway_configured"] and cfg["payout_address_configured"]
                      and cfg["auto_payout_enabled"])
             rewards.update(status="connected", personal_rewards_verified=True,
-                           payout_threshold_reached=rewards["confirmed_sats"] >= cfg["threshold_sats"],\n                           payout_policy="every_confirmed_reward_batch",
+                           payout_threshold_reached=rewards["confirmed_sats"] >= cfg["threshold_sats"],
+                           payout_policy="every_confirmed_reward_batch",
                            payout_ready=ready, configuration=public_config)
             return jsonify(rewards), 200
         except requests.RequestException:
