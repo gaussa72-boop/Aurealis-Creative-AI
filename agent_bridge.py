@@ -62,3 +62,7 @@ def register_agent_bridge(app, agent_id, display_name, persona):
             return jsonify(error="provider_request_failed", provider_status=exc.code), 502
         except (URLError, TimeoutError, ValueError, KeyError):
             return jsonify(error="agent_provider_unavailable"), 502
+
+    if agent_id == "aurealis-omnia":
+        from mining_rewards import register_mining_rewards
+        register_mining_rewards(app)
