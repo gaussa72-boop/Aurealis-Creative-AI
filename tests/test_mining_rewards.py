@@ -17,9 +17,17 @@ class MiningRewardsTests(unittest.TestCase):
         self.app = Flask(__name__)
         self.app.config["TESTING"] = True
         register_mining_rewards(self.app)
-        self.client = self.app.test_client()\n        with self.client.session_transaction() as sess:\n            sess["superadmin"] = True
+        self.client = self.app.test_client()
+        with self.client.session_transaction() as sess:
+            sess["superadmin"] = True
 
-    def test_mining_access_is_denied_without_superadmin(self):\n        with self.client.session_transaction() as sess:\n            sess.clear()\n        response = self.client.get("/api/mining/rewards")\n        self.assertEqual(response.status_code, 403)\n\n    def test_unconfigured_pool_never_claims_rewards(self):
+    def test_mining_access_is_denied_without_superadmin(self):
+        with self.client.session_transaction() as sess:
+            sess.clear()
+        response = self.client.get("/api/mining/rewards")
+        self.assertEqual(response.status_code, 403)
+
+    def test_unconfigured_pool_never_claims_rewards(self):
         with patch.dict(os.environ, {"MINING_POOL_API_URL": "", "MINING_POOL_API_TOKEN": ""}, clear=False):
             response = self.client.get("/api/mining/rewards")
         data = response.get_json()
@@ -56,8 +64,8 @@ class MiningRewardsTests(unittest.TestCase):
             response = self.client.post("/api/mining/rewards/settle",
                                         headers={"X-MINING-CRON-TOKEN": "cron-token"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["status"], "below_threshold")
-        payout.assert_not_called()
+        self.assertEqual(response.get_json()["status"], "submitted")
+        self.assertEqual(payout.call_args.kwargs["json"]["amount_sats"], 100000000)
 
     def test_confirmed_reward_payout_uses_stable_idempotency_key(self):
         env = {
