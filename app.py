@@ -75,6 +75,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS inquiries(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,email TEXT NOT NULL,intent TEXT,asset_type TEXT,title TEXT,amount TEXT,message TEXT,status TEXT DEFAULT 'new',created_at TEXT);
         CREATE TABLE IF NOT EXISTS listings(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,kind TEXT,description TEXT,valuation REAL,units REAL,investor_share REAL DEFAULT 70,platform_share REAL DEFAULT 30,status TEXT DEFAULT 'demo-only',created_at TEXT);
         CREATE TABLE IF NOT EXISTS tracked_wallets(address TEXT PRIMARY KEY,label TEXT NOT NULL,created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS mined_block_archive(block_hash TEXT PRIMARY KEY,height INTEGER NOT NULL,timestamp INTEGER,tx_count INTEGER,size INTEGER,weight INTEGER,median_fee REAL,reward_sats INTEGER,pool TEXT,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS portfolio_assets(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             asset_type TEXT NOT NULL CHECK(asset_type IN ('crypto','stock')),
@@ -226,6 +227,41 @@ def mining_overview():
     except (requests.RequestException,ValueError,TypeError,KeyError) as e:
         app.logger.warning("Mining overview unavailable: %s",type(e).__name__)
         return jsonify(error="Live-Blockchain-Daten sind momentan nicht erreichbar. Bitte erneut aktualisieren.",source="mempool.space"),502
+
+
+@app.get("/blocks")
+def mining_block_archive_page():
+    return send_from_directory("frontend","blocks.html")
+
+@app.route("/api/mining/blocks/archive",methods=["GET","POST"])
+def mining_block_archive():
+    if request.method=="POST":
+        data=request.get_json(silent=True) or {}
+        blocks=data.get("blocks",[])
+        if not isinstance(blocks,list) or len(blocks)>100:
+            return jsonify(error="Es können höchstens 100 geprüfte Blockeinträge je Abruf gespeichert werden."),400
+        now=datetime.now(timezone.utc).isoformat()
+        saved=0
+        with db() as c:
+            for b in blocks:
+                if not isinstance(b,dict): continue
+                h=b.get("id")
+                height=b.get("height")
+                if not isinstance(h,str) or not re.fullmatch(r"[a-fA-F0-9]{64}",h): continue
+                if not isinstance(height,int) or height<0: continue
+                c.execute("""INSERT INTO mined_block_archive(block_hash,height,timestamp,tx_count,size,weight,median_fee,reward_sats,pool,first_seen,last_seen)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(block_hash) DO UPDATE SET last_seen=excluded.last_seen""",
+                    (h,height,b.get("timestamp"),b.get("tx_count"),b.get("size"),b.get("weight"),b.get("median_fee"),(b.get("reward") if isinstance(b.get("reward"),int) else None),str(b.get("pool") or "Unbekannter Mining-Pool")[:120],now,now))
+                saved+=1
+        return jsonify(ok=True,received=len(blocks),saved=saved,note="Öffentliche Netzwerkblöcke archiviert; kein Nachweis eigener Mining-Erträge."),200
+    try:
+        limit=max(1,min(5000,int(request.args.get("limit",500))))
+    except ValueError: limit=500
+    with db() as c:
+        rows=c.execute("SELECT * FROM mined_block_archive ORDER BY height DESC LIMIT ?",(limit,)).fetchall()
+        count=c.execute("SELECT COUNT(*) AS n FROM mined_block_archive").fetchone()["n"]
+    return jsonify(items=[dict(x) for x in rows],total=count,source="mempool.space public network data",read_only=True)
 
 @app.get("/api/mining/hardware/status")
 def mining_hardware_status():
