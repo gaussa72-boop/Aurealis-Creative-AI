@@ -16,6 +16,7 @@ class MiningRewardsTests(unittest.TestCase):
             os.remove(TEST_DB)
         self.app = Flask(__name__)
         self.app.config["TESTING"] = True
+        self.app.secret_key = "test-secret"
         register_mining_rewards(self.app)
         self.client = self.app.test_client()
         with self.client.session_transaction() as sess:
