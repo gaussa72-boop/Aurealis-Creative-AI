@@ -27,7 +27,7 @@ A new modular superadmin console for AI research, authorized website analysis, A
 ## Important limitations
 - This is not a copy of the whole Internet, nor a universal index of every database. Web search is performed through the configured provider; connectors must be added lawfully and individually.
 - Website analysis requires ownership or explicit permission. It refuses local/private IP destinations and does not bypass logins, paywalls, CAPTCHAs or technical restrictions.
-- SQLite is local/ephemeral on Render. For durable multi-device production use, provision PostgreSQL and configure a persistent DATABASE_PATH or migrate the app to PostgreSQL before storing important records.
+- Mining payout records use PostgreSQL when DATABASE_URL is configured (psycopg 3); SQLite remains only a local-development fallback. The Render Postgres database must be connected by setting DATABASE_URL to its internal connection string in the web service's Environment. Do not commit or expose that secret.
 - No actual patent application is filed. Patentability and filing must be checked by a qualified patent attorney and the relevant patent office.
 - Financial trading and fractional ownership remain disabled until a German/EU legal assessment, permissions, disclosures, custody/payment and market infrastructure requirements are satisfied.
 
@@ -44,7 +44,7 @@ API keys and superadmin credentials must be configured only in Render Environmen
 
 ## Superadmin-only Bitcoin mining rewards and automatic payouts
 - Public block, mempool, hashrate and mining-pool statistics from mempool.space are network-wide data, not proof of personal mining rewards.
-- Personal reward reporting uses a separately operated HTTPS pool adapter at MINING_POOL_API_URL + /api/rewards. It must return integer confirmed_sats (the newly confirmed, not-yet-paid reward batch), pending_sats, blocks_found and a unique stable settlement_id for each batch. Configure MINING_POOL_API_URL and MINING_POOL_API_TOKEN.
+- OMNIA defaults to MINING_POOL_MODE=internal. This is a virtual/demo pool only: confirmed_sats and pending_sats remain zero and no Bitcoin payout is possible. Real personal reward reporting requires explicitly switching to external mode and using a separately operated HTTPS pool adapter at MINING_POOL_API_URL + /api/rewards. It must return integer confirmed_sats (the newly confirmed, not-yet-paid reward batch), pending_sats, blocks_found and a unique stable settlement_id for each batch. Configure MINING_POOL_API_URL and MINING_POOL_API_TOKEN.
 - GET /api/mining/rewards reports only pool-account credits. If no verified pool adapter is configured, personal block and reward values remain unknown.
 - Automatic payouts are disabled until explicitly enabled. Once enabled, every newly confirmed reward batch (minimum 1 satoshi; no 3 BTC threshold) is submitted automatically by the trusted scheduler. Configure MINING_AUTO_PAYOUT_ENABLED=true, MINING_PAYOUT_ADDRESS, MINING_PAYOUT_GATEWAY_URL, MINING_PAYOUT_GATEWAY_TOKEN and MINING_CRON_TOKEN. MINING_PAYOUT_THRESHOLD_SATS is no longer used.
 - The payout gateway must expose POST /api/payouts, enforce the Idempotency-Key header, and return a status of submitted, broadcast or confirmed plus a 64-character hexadecimal txid. A trusted scheduler must call POST /api/mining/rewards/settle promptly and repeatedly with X-MINING-CRON-TOKEN. The pool adapter must report each new confirmed batch once with its own settlement_id; coinbase maturity and pool settlement rules still apply.
