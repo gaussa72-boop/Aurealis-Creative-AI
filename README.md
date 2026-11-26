@@ -41,3 +41,11 @@ API keys and superadmin credentials must be configured only in Render Environmen
 - Configure `MINING_GATEWAY_URL` (HTTPS only) and `MINING_GATEWAY_TOKEN` as protected Render environment variables. The gateway must expose authenticated `GET /api/status` JSON with a `connected` field and optional telemetry such as `hashrate`, `power_w`, `temperature_c`, `pool`, accepted/rejected shares and uptime.
 - The bridge is read-only: it does not configure pools, start/stop miners, sign transactions, custody keys or request payouts. Those capabilities require a separately reviewed, explicitly approved hardware controller and verified pool account.
 - Without both environment variables the endpoint accurately reports `not_configured`; no hardware connection is assumed.
+
+## Verified Bitcoin mining rewards and threshold payouts
+- Public block, mempool, hashrate and mining-pool statistics from mempool.space are network-wide data, not proof of personal mining rewards.
+- Personal reward reporting uses a separately operated HTTPS pool adapter at MINING_POOL_API_URL + /api/rewards. It must return integer confirmed_sats, pending_sats, blocks_found and a stable settlement_id. Configure MINING_POOL_API_URL and MINING_POOL_API_TOKEN.
+- GET /api/mining/rewards reports only pool-account credits. If no verified pool adapter is configured, personal block and reward values remain unknown.
+- Threshold payouts are disabled by default. Configure MINING_AUTO_PAYOUT_ENABLED=true, MINING_PAYOUT_THRESHOLD_SATS (default 300000000 sats = 3 BTC), MINING_PAYOUT_ADDRESS, MINING_PAYOUT_GATEWAY_URL, MINING_PAYOUT_GATEWAY_TOKEN and MINING_CRON_TOKEN.
+- The payout gateway must expose POST /api/payouts, enforce the Idempotency-Key header, and return a status of submitted, broadcast or confirmed plus a 64-character hexadecimal txid. A trusted scheduler calls POST /api/mining/rewards/settle with X-MINING-CRON-TOKEN.
+- This app never stores wallet private keys or signs transactions. The payout gateway must be independently reviewed. Verify wallet ownership and the destination address with the pool provider before enabling automatic payouts. A format check is not proof of address validity or ownership.
