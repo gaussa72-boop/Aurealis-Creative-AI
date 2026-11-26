@@ -17,9 +17,9 @@ class MiningRewardsTests(unittest.TestCase):
         self.app = Flask(__name__)
         self.app.config["TESTING"] = True
         register_mining_rewards(self.app)
-        self.client = self.app.test_client()
+        self.client = self.app.test_client()\n        with self.client.session_transaction() as sess:\n            sess["superadmin"] = True
 
-    def test_unconfigured_pool_never_claims_rewards(self):
+    def test_mining_access_is_denied_without_superadmin(self):\n        with self.client.session_transaction() as sess:\n            sess.clear()\n        response = self.client.get("/api/mining/rewards")\n        self.assertEqual(response.status_code, 403)\n\n    def test_unconfigured_pool_never_claims_rewards(self):
         with patch.dict(os.environ, {"MINING_POOL_API_URL": "", "MINING_POOL_API_TOKEN": ""}, clear=False):
             response = self.client.get("/api/mining/rewards")
         data = response.get_json()
@@ -32,7 +32,7 @@ class MiningRewardsTests(unittest.TestCase):
         response = self.client.post("/api/mining/rewards/settle")
         self.assertEqual(response.status_code, 401)
 
-    def test_below_threshold_does_not_call_payout_gateway(self):
+    def test_every_confirmed_reward_is_paid_even_if_old_threshold_env_is_set(self):
         env = {
             "MINING_POOL_API_URL": "https://pool.example",
             "MINING_POOL_API_TOKEN": "pool-token",
@@ -56,7 +56,7 @@ class MiningRewardsTests(unittest.TestCase):
         self.assertEqual(response.get_json()["status"], "below_threshold")
         payout.assert_not_called()
 
-    def test_threshold_payout_uses_stable_idempotency_key(self):
+    def test_confirmed_reward_payout_uses_stable_idempotency_key(self):
         env = {
             "MINING_POOL_API_URL": "https://pool.example",
             "MINING_POOL_API_TOKEN": "pool-token",
