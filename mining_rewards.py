@@ -97,6 +97,14 @@ def register_mining_rewards(app):
             or request.path.startswith("/api/mining/")
             or request.path.startswith("/api/agent/")
         )
+        if request.path == "/api/mining/rewards/settle":
+            # The trusted scheduled payout worker may call this one endpoint using
+            # the cron token; browser and agent access remains superadmin-only.
+            expected = os.getenv("MINING_CRON_TOKEN", "").strip()
+            supplied = request.headers.get("X-MINING-CRON-TOKEN", "").strip()
+            if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+                return jsonify(error="cron_authentication_required"), 401
+            return None
         if protected and not session.get("superadmin"):
             return jsonify(error="Mining-KI ist vorübergehend gesperrt. Nur der Superadmin darf zugreifen."), 403
 
