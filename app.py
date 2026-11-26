@@ -379,27 +379,44 @@ def market_search():
     kind=request.args.get("type","crypto").lower()
     if len(q)<2:return jsonify(items=[])
     if kind not in ("crypto","stock"):return jsonify(error="Typ muss crypto oder stock sein."),400
+    if kind=="stock":
+        try:return jsonify(items=yahoo_search(q),source="Yahoo Finance")
+        except requests.RequestException:return jsonify(error="Aktienmarktsuche momentan nicht erreichbar."),502
+    # CoinGecko first; common spelling variants are tried as a helpful fallback.
+    queries=[q]
+    if q.casefold()=="caspa":queries.append("kaspa")
     try:
-        if kind=="crypto":
-            data=market_json("https://api.coingecko.com/api/v3/search",{"query":q})
-            items=[{"asset_type":"crypto","asset_key":x.get("id"),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"market_cap_rank":x.get("market_cap_rank"),"thumb":x.get("thumb")} for x in data.get("coins",[])[:15]]
-        else:
-            items=yahoo_search(q)
-        return jsonify(items=items,source="CoinGecko" if kind=="crypto" else "Yahoo Finance")
+        for term in queries:
+            data=market_json("https://api.coingecko.com/api/v3/search",{"query":term})
+            items=[{"asset_type":"crypto","asset_key":x.get("id"),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"market_cap_rank":x.get("market_cap_rank"),"thumb":x.get("thumb"),"source":"CoinGecko"} for x in data.get("coins",[])[:15]]
+            if items:return jsonify(items=items,source="CoinGecko",query_used=term)
     except requests.RequestException:
-        return jsonify(error="Marktsuche momentan nicht erreichbar. Bitte später erneut versuchen."),502
+        pass
+    # Fallback provider keeps search usable during CoinGecko rate limits/outages.
+    try:
+        data=market_json("https://api.coinpaprika.com/v1/search/",{"q":queries[-1],"c":"currencies","limit":15})
+        items=[{"asset_type":"crypto","asset_key":"paprika:"+str(x.get("id","")),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"market_cap_rank":x.get("rank"),"source":"CoinPaprika"} for x in data.get("currencies",[]) if x.get("id")]
+        return jsonify(items=items,source="CoinPaprika")
+    except requests.RequestException:
+        return jsonify(error="Kryptomarktsuche ist bei beiden Datenquellen momentan nicht erreichbar."),502
 
 @app.get("/api/markets/universe")
 def market_universe():
     kind=request.args.get("type","crypto").lower()
     if kind!="crypto":return jsonify(error="Für Aktien nutze die dynamische Symbolsuche; der Aktienmarkt hat keine einheitliche vollständige kostenlose Gesamtliste."),400
+    page=max(1,min(4,int(request.args.get("page","1"))))
     try:
-        page=max(1,min(4,int(request.args.get("page","1"))))
         data=market_json("https://api.coingecko.com/api/v3/coins/markets",{"vs_currency":"eur","order":"market_cap_desc","per_page":250,"page":page,"sparkline":"false","price_change_percentage":"24h,7d"})
-        items=[{"asset_type":"crypto","asset_key":x.get("id"),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"price":x.get("current_price"),"currency":"EUR","market_cap":x.get("market_cap"),"rank":x.get("market_cap_rank"),"change_24h_pct":x.get("price_change_percentage_24h"),"change_7d_pct":x.get("price_change_percentage_7d_in_currency"),"image":x.get("image")} for x in data]
+        items=[{"asset_type":"crypto","asset_key":x.get("id"),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"price":x.get("current_price"),"currency":"EUR","market_cap":x.get("market_cap"),"rank":x.get("market_cap_rank"),"change_24h_pct":x.get("price_change_percentage_24h"),"change_7d_pct":x.get("price_change_percentage_7d_in_currency"),"image":x.get("image"),"source":"CoinGecko"} for x in data]
         return jsonify(items=items,page=page,per_page=250,source="CoinGecko",note="Top 1.000 nach Marktkapitalisierung; weitere Coins können über die Suche gefunden werden.")
     except (requests.RequestException,ValueError):
-        return jsonify(error="Coin-Marktdaten momentan nicht verfügbar."),502
+        try:
+            data=market_json("https://api.coinpaprika.com/v1/tickers",{"quotes":"EUR"})
+            start=(page-1)*250
+            items=[{"asset_type":"crypto","asset_key":"paprika:"+str(x.get("id","")),"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"price":(x.get("quotes",{}).get("EUR") or {}).get("price"),"currency":"EUR","market_cap":(x.get("quotes",{}).get("EUR") or {}).get("market_cap"),"rank":x.get("rank"),"change_24h_pct":(x.get("quotes",{}).get("EUR") or {}).get("percent_change_24h"),"change_7d_pct":(x.get("quotes",{}).get("EUR") or {}).get("percent_change_7d"),"source":"CoinPaprika"} for x in data[start:start+250] if x.get("id")]
+            return jsonify(items=items,page=page,per_page=250,source="CoinPaprika",note="Ersatzdatenquelle, wenn CoinGecko nicht erreichbar ist.")
+        except (requests.RequestException,ValueError,TypeError):
+            return jsonify(error="Kryptomarktdaten sind bei beiden Datenquellen momentan nicht verfügbar."),502
 
 @app.get("/api/markets/quote")
 def market_quote():
@@ -408,6 +425,12 @@ def market_quote():
     if kind not in ("crypto","stock") or not key:return jsonify(error="Asset-Typ und Kennung erforderlich."),400
     try:
         if kind=="crypto":
+            if key.startswith("paprika:"):
+                paprika_id=key.split(":",1)[1]
+                if not re.fullmatch(r"[a-z0-9-]{1,100}",paprika_id):return jsonify(error="Ungültige Coin-Kennung."),400
+                x=market_json("https://api.coinpaprika.com/v1/tickers/"+paprika_id,{"quotes":"EUR"})
+                q=x.get("quotes",{}).get("EUR") or {}
+                return jsonify({"asset_type":"crypto","asset_key":key,"symbol":str(x.get("symbol","")).upper(),"name":x.get("name"),"price":q.get("price"),"currency":"EUR","market_cap":q.get("market_cap"),"volume_24h":q.get("volume_24h"),"change_24h_pct":q.get("percent_change_24h"),"change_7d_pct":q.get("percent_change_7d"),"source":"CoinPaprika","updated_at":datetime.now(timezone.utc).isoformat()})
             if not re.fullmatch(r"[a-z0-9-]{1,100}",key):return jsonify(error="Ungültige Coin-Kennung."),400
             data=market_json("https://api.coingecko.com/api/v3/coins/markets",{"vs_currency":"eur","ids":key,"sparkline":"false","price_change_percentage":"24h,7d"})
             if not data:return jsonify(error="Coin nicht gefunden."),404
