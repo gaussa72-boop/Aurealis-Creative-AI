@@ -47,9 +47,12 @@ class MiningRewardsTests(unittest.TestCase):
         pool.json.return_value = {"confirmed_sats": 100000000, "pending_sats": 0,
                                   "blocks_found": 0, "settlement_id": "settlement-1"}
         pool.raise_for_status.return_value = None
+        sent = Mock()
+        sent.json.return_value = {"status": "submitted", "txid": "c" * 64}
+        sent.raise_for_status.return_value = None
         with patch.dict(os.environ, env, clear=False), \
              patch("mining_rewards.requests.get", return_value=pool), \
-             patch("mining_rewards.requests.post") as payout:
+             patch("mining_rewards.requests.post", return_value=sent) as payout:
             response = self.client.post("/api/mining/rewards/settle",
                                         headers={"X-MINING-CRON-TOKEN": "cron-token"})
         self.assertEqual(response.status_code, 200)
