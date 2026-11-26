@@ -66,3 +66,5 @@ def register_agent_bridge(app, agent_id, display_name, persona):
     if agent_id == "aurealis-omnia":
         from mining_rewards import register_mining_rewards
         register_mining_rewards(app)
+        from virtual_miner import register_virtual_miner
+        register_virtual_miner(app)
