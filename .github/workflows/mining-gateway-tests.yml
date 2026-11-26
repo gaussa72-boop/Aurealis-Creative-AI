@@ -3,6 +3,9 @@ on:
   push:
     paths:
       - "app.py"
+      - "agent_bridge.py"
+      - "mining_rewards.py"
+      - "README.md"
       - "frontend/wallet.html"
       - "tests/**"
       - ".github/workflows/mining-gateway-tests.yml"
