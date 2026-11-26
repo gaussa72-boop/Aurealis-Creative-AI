@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#09111d">
+<title>Unbekannte Werte sind keine Null | Technologisierte Einheit</title>
+<meta name="description" content="Tagesjournal vom 27. November 2026: Wie KI-Systeme Unsicherheit, fehlende Daten und begründete Enthaltung sichtbar machen können.">
+<meta name="keywords" content="Technologisierte Einheit, KI, Unsicherheit, Kalibrierung, fehlende Daten, Datenqualität, NIST AI RMF, Modellbewertung, Wissenschaft">
+<style>
+:root{--bg:#09111d;--panel:#111c2a;--gold:#d9bb78;--ice:#8fe0ee;--text:#eaf0f3;--muted:#b8c5d0;--line:#8fe0ee44}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 82% 0%,#16344a 0,transparent 38%),radial-gradient(ellipse at 8% 80%,#17233a 0,transparent 34%),var(--bg);color:var(--text);font:16px/1.85 system-ui,-apple-system,Segoe UI,sans-serif}
+a{color:var(--ice)}.wrap{max-width:920px;margin:auto;padding:0 24px}header{padding:20px 0;border-bottom:1px solid var(--line);font:10px system-ui,sans-serif;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)}header a{color:var(--gold);text-decoration:none}
+.hero{padding:82px 0 52px}.eyebrow{font-size:10px;letter-spacing:.25em;text-transform:uppercase;color:var(--ice)}h1{font:500 clamp(40px,7vw,72px)/1.02 Georgia,serif;color:#f0dfb8;margin:18px 0;max-width:850px}.subtitle{font:italic 21px/1.5 Georgia,serif;color:#bde2e8;max-width:760px}.meta{margin-top:24px;color:var(--gold);font-size:10px;letter-spacing:.16em}
+.intro,.level{padding:24px 28px;margin:0 0 28px;background:linear-gradient(135deg,#121e2b,#0d1722);border:1px solid var(--line);border-radius:12px}
+.label{display:inline-block;font:10px system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;padding:5px 9px;border:1px solid var(--line);border-radius:20px;color:var(--ice);margin-bottom:12px}
+h2{font:500 29px/1.2 Georgia,serif;color:var(--gold);margin:48px 0 14px}h3{font-size:18px;color:#cce9ed;margin:25px 0 8px}p{margin:0 0 17px}ul{padding-left:22px;color:#d6e0e5}li{margin:8px 0}
+.callout{border-left:3px solid var(--gold);padding:16px 22px;background:#d9bb780c;color:#e7ddc6;margin:26px 0}
+table{width:100%;border-collapse:collapse;margin:20px 0;font-size:14px}th,td{border-bottom:1px solid #8fe0ee33;padding:11px;text-align:left;vertical-align:top}th{color:var(--gold)}
+footer{margin-top:48px;padding:28px 0 48px;border-top:1px solid var(--line);font:10px system-ui,sans-serif;letter-spacing:.13em;color:#aab9c5}.tags{font:11px/2 system-ui,sans-serif;color:var(--ice);margin-top:25px}
+@media(max-width:600px){.wrap{padding:0 18px}.hero{padding:60px 0 40px}.intro,.level{padding:20px}h2{font-size:26px}table{font-size:12px}}
+</style></head><body>
+<header><div class="wrap"><a href="/">✧ Technologisierte Einheit</a>　/　Tagesjournal · 27. November 2026</div></header>
+<main class="wrap">
+<section class="hero"><div class="eyebrow">Wissenschaft · Technologie · digitale Zukunft</div><h1>Unbekannte Werte sind keine Null</h1><p class="subtitle">Wie KI-Systeme Datenlücken, unsichere Prognosen und begründete Enthaltung sichtbar machen können.</p><div class="meta">TECHNOLOGISIERTE EINHEIT · TAGESJOURNAL 02</div></section>
+<section class="intro"><p><strong>Einleitung.</strong> Ein leeres Feld in einer Datenbank, eine fehlende Messung und ein numerischer Wert von null bedeuten nicht dasselbe. Wenn ein KI-System diese Unterschiede verwischt, kann es aus fehlender Evidenz eine scheinbar präzise Aussage machen. Dieser Beitrag zeigt, wie Unsicherheit in Datenpipelines und KI-Anwendungen kenntlich bleibt – und warum ein System manchmal besser fährt, wenn es eine Antwort zurückstellt.</p><p>Die folgenden Ebenen sind getrennt: belegte technische Grundlagen, eine offene Architekturhypothese und ein fiktionales Zukunftsmodell.</p></section>
+<section><h2>1. Die drei Zustände, die nicht verwechselt werden dürfen</h2>
+<p>In einer Datenpipeline können mindestens drei unterschiedliche Zustände auftreten. Ein Wert kann tatsächlich null sein. Er kann fehlen, weil er nie erhoben wurde. Oder er kann unbekannt sein, weil eine Quelle nicht erreichbar, widersprüchlich oder nicht ausreichend geprüft ist. Werden diese Zustände in ein einziges Feld gepresst, verliert das System Informationen über die Herkunft und Bedeutung der Lücke.</p>
+<table><thead><tr><th>Zustand</th><th>Bedeutung</th><th>Beispiel</th></tr></thead><tbody>
+<tr><td>Nullwert</td><td>Der gemessene oder definierte Wert beträgt tatsächlich null.</td><td>Ein Zähler meldet nach erfolgreicher Messung null Ereignisse.</td></tr>
+<tr><td>Fehlend</td><td>Es liegt kein Wert vor; der Grund muss separat ermittelt werden.</td><td>Ein Sensor hat während eines Zeitfensters keine Daten geliefert.</td></tr>
+<tr><td>Unbekannt / ungeprüft</td><td>Eine Aussage ist vorhanden, aber Herkunft, Gültigkeit oder Beleglage reichen nicht aus.</td><td>Eine externe Quelle liefert eine Behauptung ohne prüfbaren Nachweis.</td></tr>
+</tbody></table>
+<div class="callout">Eine Datenlücke ist selbst eine Information: Sie sagt etwas über die Grenzen des Beobachtungsprozesses – nicht automatisch über die Welt, die beobachtet werden sollte.</div>
+</section>
+<section><h2>2. Belegte Grundlage: Vorhersagewahrscheinlichkeit ist nicht automatisch Verlässlichkeit</h2>
+<div class="level"><span class="label">Belegte technische Grundlage</span>
+<p>Bei Klassifikationsmodellen kann eine vorhergesagte Wahrscheinlichkeit als Vertrauensmaß dienen – aber nur dann sinnvoll, wenn sie für den jeweiligen Einsatz hinreichend kalibriert ist. Die scikit-learn-Dokumentation beschreibt gut kalibrierte Klassifikatoren so: Unter den Fällen, denen ein Modell ungefähr 0,8 zuweist, sollten langfristig ungefähr 80 Prozent tatsächlich zur positiven Klasse gehören. Kalibrierungskurven beziehungsweise Reliability Diagrams helfen, diese Beziehung auf Testdaten zu untersuchen.</p>
+<p>Wichtig ist die Einschränkung: Ein einzelner Kennwert beweist keine vollständige Kalibrierung. Die Brier- und Log-Loss-Metriken verbinden mehrere Eigenschaften probabilistischer Vorhersagen; ein besserer Gesamtwert bedeutet nicht automatisch, dass allein die Kalibrierung besser geworden ist. Auch Datenverteilung, Stichprobengröße und die Trennung von Trainings- und Kalibrierungsdaten müssen beachtet werden.</p>
+<p>Quelle: <a href="https://scikit-learn.org/stable/modules/calibration.html">scikit-learn – Probability calibration</a>.</p>
+</div>
+<p>Für generative Sprachmodelle ist zusätzliche Vorsicht nötig. Eine flüssige Antwort oder eine vom Modell selbst formulierte Prozentzahl ist nicht automatisch eine empirisch kalibrierte Wahrscheinlichkeit dafür, dass der Inhalt wahr ist. Token-Wahrscheinlichkeiten, subjektiv klingende Sicherheit und faktische Richtigkeit sind verschiedene Dinge. Ein Produkt sollte diese Größen nicht unter demselben Etikett anzeigen.</p>
+</section>
+<section><h2>3. Risikomanagement über den gesamten Lebenszyklus</h2>
+<div class="level"><span class="label">Belegte Grundlage · Governance</span>
+<p>Das NIST AI Risk Management Framework beschreibt ein freiwillig nutzbares Vorgehen, um Risiken von KI-Systemen bei Gestaltung, Entwicklung, Nutzung und Bewertung zu berücksichtigen. Zu den Vertrauensmerkmalen zählen unter anderem Validität und Zuverlässigkeit, Sicherheit, Schutz, Verantwortlichkeit, Transparenz, Erklärbarkeit und ein angemessener Umgang mit schädlichen Verzerrungen.</p>
+<p>Für Unsicherheit heißt das praktisch: Die Bewertung darf nicht erst am Ende einer Produktentwicklung stattfinden. Datenquellen, Einsatzbedingungen, bekannte Grenzen und die Folgen falscher Ergebnisse sollten bereits beim Entwurf dokumentiert und im Betrieb weiter beobachtet werden.</p>
+<p>Quelle: <a href="https://www.nist.gov/itl/ai-risk-management-framework">NIST – AI Risk Management Framework</a>.</p>
+</div>
+</section>
+<section><h2>4. Eine praktische Antwortpolitik: antworten, einschränken oder sich enthalten</h2>
+<p>Ein verantwortungsvolles System braucht mehr als eine einzige Ausgabeform. Für jede Anfrage sollte es mindestens drei mögliche Reaktionen geben:</p>
+<ul>
+<li><strong>Antworten:</strong> Die Quellen und Prüfungen reichen für die konkrete Aufgabe aus. Herkunft und Zeitbezug werden genannt.</li>
+<li><strong>Einschränken:</strong> Ein Teil ist belastbar, ein anderer bleibt offen. Die Antwort benennt genau, welche Aussage nur vorläufig ist.</li>
+<li><strong>Sich enthalten oder weiterleiten:</strong> Die Evidenz reicht nicht aus oder die Folgen sind zu wichtig für eine automatische Entscheidung. Das System erklärt, was fehlt und wer prüfen sollte.</li>
+</ul>
+<p>Diese Abstention-Strategie ist ein Architekturvorschlag, keine Garantie gegen Fehler. Sie muss anhand realer Aufgaben getestet werden: Wie oft enthält sich das System unnötig? Wie oft antwortet es trotz unzureichender Belege? Welche Gruppen oder Datenquellen sind besonders häufig von fehlender Abdeckung betroffen?</p>
+</section>
+<section><h2>5. Hypothese: der Unsicherheitsmantel</h2>
+<div class="level"><span class="label">Hypothese · zu evaluierender Entwurf</span>
+<p>Für modulare KI-Systeme könnte jeder wichtige Output einen kleinen „Unsicherheitsmantel“ erhalten. Er wäre kein magischer Wahrheitswert und keine einzige Konfidenzzahl, sondern ein strukturierter Datensatz mit mehreren getrennten Feldern:</p>
+<ul>
+<li>Quellenherkunft und Zeitpunkt der letzten Prüfung;</li>
+<li>Abdeckung der benötigten Informationen;</li>
+<li>bekannte Datenlücken und deren mögliche Ursachen;</li>
+<li>Widersprüche zwischen Quellen oder Modulen;</li>
+<li>Kalibrierungsstatus, sofern ein geeignetes Verfahren existiert;</li>
+<li>Grenzen der Aussage und Bedingungen für eine menschliche Freigabe.</li>
+</ul>
+<p>Die Hypothese lautet: Ein solcher Mantel könnte es nachgelagerten Systemen erleichtern, Ergebnisse nach ihrer Eignung für eine Aufgabe zu behandeln, statt jede Antwort als gleich belastbar anzusehen. Ob er tatsächlich Fehler reduziert, müsste in kontrollierten Tests mit definierten Aufgaben, Referenzdaten und Vergleichsarchitekturen untersucht werden.</p>
+</div>
+</section>
+<section><h2>6. Fiktion: Aurealis Nullraum</h2>
+<div class="level"><span class="label">Fiktion · Zukunftsmodell</span>
+<p>Im erfundenen Forschungsmodell „Aurealis Nullraum“ besitzt jede Aussage drei sichtbare Ränder: ihren Ursprung, ihren Geltungsbereich und das, was nicht belegt werden konnte. Ein Modul darf eine Lücke nicht eigenständig in eine Tatsache verwandeln. Es kann eine Hypothese anbieten, muss sie aber als Hypothese markieren und die Daten nennen, die zur Prüfung fehlen.</p>
+<p>Das fiktive System vergibt keinen allgemeinen Wahrheitsrang. Es erstellt eine aufgabenspezifische Eignungsanzeige: Eine Quelle kann für eine historische Datumsfrage geeignet und für eine medizinische Schlussfolgerung ungeeignet sein. Die letzte Entscheidung über folgenreiche Handlungen bleibt bei einer zuständigen Person.</p>
+<p>Aurealis Nullraum ist kein reales Produkt und kein bereits validiertes Verfahren. Er dient als Denkmodell für eine KI, die ihre Wissensgrenzen nicht versteckt.</p>
+</div>
+</section>
+<section><h2>7. Umsetzung für reale Projekte</h2>
+<p>Ein erster Prototyp lässt sich ohne neue Modellarchitektur beginnen:</p>
+<ul>
+<li>In Datenmodellen Null, fehlend und ungeprüft getrennt speichern.</li>
+<li>Für jede externe Aussage Quelle, Zeitstempel und Prüfschritt protokollieren.</li>
+<li>Für Klassifikationswahrscheinlichkeiten Kalibrierung auf separaten Testdaten untersuchen.</li>
+<li>Für generative Antworten keine selbstberichtete Sicherheit als Wahrheitswahrscheinlichkeit ausgeben.</li>
+<li>Eine klare Enthaltungsregel für fehlende Belege und folgenreiche Entscheidungen definieren.</li>
+<li>Fehler, falsche Enthaltungen und übermäßig selbstsichere Antworten regelmäßig auswerten.</li>
+</ul>
+<p>Die Technologisierte Einheit könnte daraus ein kleines, nachvollziehbares Modul entwickeln: nicht als allwissende Instanz, sondern als Prüf- und Herkunftsschicht zwischen Recherche, Analyse und Veröffentlichung.</p>
+</section>
+<section><h2>Schluss – Die Stärke einer sichtbaren Grenze</h2>
+<p>Ein System wird nicht vertrauenswürdig, weil es auf jede Frage eine Antwort produziert. Es wird vertrauenswürdiger, wenn es erkennen lässt, welche Teile einer Antwort auf Beobachtung beruhen, welche auf Schlussfolgerung und welche noch offen sind. Eine Lücke ist kein Makel, den man um jeden Preis verbergen muss. Sie kann der Anfang einer besseren Prüfung sein.</p>
+<div class="callout">Nichtwissen ist kein Ergebnis, das man erfinden muss. Es ist ein Zustand, den man sauber beschreiben kann.</div>
+</section>
+<section class="level"><span class="label">Quellen und weiterführende Grundlagen</span>
+<ul>
+<li><a href="https://www.nist.gov/itl/ai-risk-management-framework">NIST AI Risk Management Framework</a> – freiwilliger Rahmen für KI-Risikomanagement.</li>
+<li><a href="https://scikit-learn.org/stable/modules/calibration.html">scikit-learn: Probability calibration</a> – Kalibrierungskurven, Kalibrierungsverfahren und Grenzen von Bewertungsmetriken.</li>
+<li><a href="https://scikit-learn.org/stable/api/sklearn.calibration.html">scikit-learn: sklearn.calibration API</a> – technische Referenz zu Kalibrierungsverfahren.</li>
+</ul>
+<p>Schlagworte: #TechnologisierteEinheit #KI #Unsicherheit #Datenqualität #Kalibrierung #NISTAIRMF #MachineLearning #Wissenschaft #Innovation #Aurealis</p>
+</section>
+</main><footer><div class="wrap">TECHNOLOGISIERTE EINHEIT · EIN OFFENES ARCHIV FÜR WISSENSCHAFT, KREATIVITÄT UND ZUKUNFTSIDEEN</div></footer></body></html>
