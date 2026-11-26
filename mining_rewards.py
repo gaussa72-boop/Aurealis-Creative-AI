@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import requests
-from flask import jsonify, request
+from flask import jsonify, request, session
 
 BTC_ADDRESS_RE = re.compile(r"^(bc1[ac-hj-np-z02-9]{39,59}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$")
 
@@ -47,7 +47,7 @@ def _config():
     payout_url = os.getenv("MINING_PAYOUT_GATEWAY_URL", "").strip().rstrip("/")
     payout_token = os.getenv("MINING_PAYOUT_GATEWAY_TOKEN", "").strip()
     address = os.getenv("MINING_PAYOUT_ADDRESS", "").strip()
-    threshold = int(os.getenv("MINING_PAYOUT_THRESHOLD_SATS", "300000000"))
+    # User policy: pay every newly confirmed reward batch; no 3 BTC threshold.\n    threshold = 1
     return {
         "pool_configured": _https_base(pool_url) and bool(pool_token),
         "payout_gateway_configured": _https_base(payout_url) and bool(payout_token),
@@ -106,7 +106,7 @@ def register_mining_rewards(app):
             ready = (cfg["payout_gateway_configured"] and cfg["payout_address_configured"]
                      and cfg["auto_payout_enabled"])
             rewards.update(status="connected", personal_rewards_verified=True,
-                           payout_threshold_reached=rewards["confirmed_sats"] >= cfg["threshold_sats"],
+                           payout_threshold_reached=rewards["confirmed_sats"] >= cfg["threshold_sats"],\n                           payout_policy="every_confirmed_reward_batch",
                            payout_ready=ready, configuration=public_config)
             return jsonify(rewards), 200
         except requests.RequestException:
@@ -134,7 +134,7 @@ def register_mining_rewards(app):
         except (ValueError, TypeError):
             return jsonify(status="invalid_pool_response"), 502
         amount = rewards["confirmed_sats"]
-        if amount < cfg["threshold_sats"]:
+        if amount < 1:
             return jsonify(status="below_threshold", confirmed_sats=amount,
                            threshold_sats=cfg["threshold_sats"]), 200
         settlement_id = rewards.get("settlement_id")
