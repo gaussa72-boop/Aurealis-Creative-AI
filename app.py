@@ -11,6 +11,10 @@ ROOT=os.path.dirname(os.path.abspath(__file__))
 DB=os.getenv("DATABASE_PATH",os.path.join(ROOT,"omnia.sqlite3"))
 app=Flask(__name__,static_folder="frontend")
 
+from mining_rewards import bp as mining_rewards_bp
+app.register_blueprint(mining_rewards_bp)
+
+
 from agent_bridge import register_agent_bridge
 register_agent_bridge(
     app,
