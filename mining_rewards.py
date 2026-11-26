@@ -90,6 +90,16 @@ def _pool_rewards(cfg):
 
 
 def register_mining_rewards(app):
+    @app.before_request
+    def mining_ai_owner_only():
+        protected = (
+            request.path == "/wallet"
+            or request.path.startswith("/api/mining/")
+            or request.path.startswith("/api/agent/")
+        )
+        if protected and not session.get("superadmin"):
+            return jsonify(error="Mining-KI ist vorübergehend gesperrt. Nur der Superadmin darf zugreifen."), 403
+
     @app.get("/api/mining/rewards")
     def mining_rewards_status():
         cfg = _config()
