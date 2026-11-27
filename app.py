@@ -1,8 +1,9 @@
-import os, re, json, sqlite3, secrets, ipaddress, socket
+import os, re, json, sqlite3, secrets, ipaddress, socket, base64
 from time import monotonic
 from datetime import datetime, timezone
 from functools import wraps
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
+from decimal import Decimal, InvalidOperation
 import requests
 from flask import Flask, request, jsonify, session, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -80,6 +81,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS inquiries(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,email TEXT NOT NULL,intent TEXT,asset_type TEXT,title TEXT,amount TEXT,message TEXT,status TEXT DEFAULT 'new',created_at TEXT);
         CREATE TABLE IF NOT EXISTS listings(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,kind TEXT,description TEXT,valuation REAL,units REAL,investor_share REAL DEFAULT 70,platform_share REAL DEFAULT 30,status TEXT DEFAULT 'demo-only',created_at TEXT);
         CREATE TABLE IF NOT EXISTS tracked_wallets(address TEXT PRIMARY KEY,label TEXT NOT NULL,created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS bitcoin_payout_proposals(
+            id TEXT PRIMARY KEY, source_address TEXT NOT NULL, destination_address TEXT NOT NULL,
+            amount_sats INTEGER NOT NULL, fee_btc REAL NOT NULL, psbt TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending', txid TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS mined_block_archive(block_hash TEXT PRIMARY KEY,height INTEGER NOT NULL,timestamp INTEGER,tx_count INTEGER,size INTEGER,weight INTEGER,median_fee REAL,reward_sats INTEGER,pool TEXT,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS portfolio_assets(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -202,6 +208,155 @@ def tracked_wallets():
         items.append(item)
     totals={key:sum(int(x.get(key,0)) for x in items if x.get("available")) for key in ("confirmed_balance_sats","confirmed_received_sats","confirmed_spent_sats","pending_balance_sats")}
     return jsonify(items=items,totals=totals,source="mempool.space",read_only=True,ownership_verified=False)
+
+
+# Superadmin-only Bitcoin payouts through an operator-managed Bitcoin Core wallet.
+# The web app never receives or stores seed phrases/private keys. Signing happens inside
+# the separately managed Bitcoin Core wallet configured through Render environment variables.
+def bitcoin_rpc(method, params=None):
+    rpc_url=os.getenv("BITCOIN_RPC_URL","").strip().rstrip("/")
+    rpc_user=os.getenv("BITCOIN_RPC_USER","").strip()
+    rpc_password=os.getenv("BITCOIN_RPC_PASSWORD","")
+    wallet_name=os.getenv("BITCOIN_RPC_WALLET","").strip()
+    if not rpc_url or not rpc_user or not rpc_password or not wallet_name:
+        raise RuntimeError("Bitcoin-Auszahlungsdienst ist nicht konfiguriert. Erforderlich sind BITCOIN_RPC_URL, BITCOIN_RPC_USER, BITCOIN_RPC_PASSWORD und BITCOIN_RPC_WALLET.")
+    parsed=urlparse(rpc_url)
+    if parsed.scheme not in ("http","https") or not parsed.hostname or parsed.username or parsed.password:
+        raise RuntimeError("BITCOIN_RPC_URL ist ungültig.")
+    if parsed.scheme!="https" and parsed.hostname not in ("127.0.0.1","localhost","::1"):
+        raise RuntimeError("Ein entfernter Bitcoin-RPC-Endpunkt muss HTTPS verwenden.")
+    endpoint=rpc_url
+    if "/wallet/" not in parsed.path:
+        endpoint=rpc_url+"/wallet/"+quote(wallet_name,safe="")
+    response=requests.post(endpoint,auth=(rpc_user,rpc_password),
+        json={"jsonrpc":"1.0","id":"aurealis-payout","method":method,"params":params or []},
+        headers={"Content-Type":"application/json"},timeout=35,allow_redirects=False)
+    response.raise_for_status()
+    payload=response.json()
+    if payload.get("error"):
+        err=payload["error"]
+        raise RuntimeError("Bitcoin Core: "+str(err.get("message","RPC-Fehler"))[:240])
+    return payload.get("result")
+
+@app.get("/api/admin/payout/config")
+@admin
+def admin_payout_config():
+    with db() as c:
+        rows=c.execute("SELECT address,label FROM tracked_wallets ORDER BY created_at ASC").fetchall()
+    configured=all(os.getenv(k,"").strip() for k in ("BITCOIN_RPC_URL","BITCOIN_RPC_USER","BITCOIN_RPC_PASSWORD","BITCOIN_RPC_WALLET"))
+    return jsonify(configured=configured,network=os.getenv("BITCOIN_NETWORK","mainnet"),
+        required_environment=[] if configured else ["BITCOIN_RPC_URL","BITCOIN_RPC_USER","BITCOIN_RPC_PASSWORD","BITCOIN_RPC_WALLET"],
+        source_wallets=[dict(x) for x in rows],
+        note="Auszahlungen sind nur aus Wallets möglich, die dem konfigurierten Bitcoin-Core-Wallet gehören (ismine=true).")
+
+@app.post("/api/admin/payout/prepare")
+@admin
+def admin_payout_prepare():
+    origin=request.headers.get("Origin","")
+    if origin and origin.rstrip("/")!=request.host_url.rstrip("/"):
+        return jsonify(error="Ungültige Herkunft der Anfrage."),403
+    d=request.get_json(silent=True) or {}
+    source=str(d.get("source_address","")).strip()
+    destination=str(d.get("destination_address","")).strip()
+    if not valid_btc_address(source) or not valid_btc_address(destination):
+        return jsonify(error="Quell- und Empfängeradresse müssen gültige Bitcoin-Adressen sein."),400
+    if source==destination:
+        return jsonify(error="Quell- und Empfängeradresse müssen verschieden sein."),400
+    try:
+        amount=Decimal(str(d.get("amount_btc","")))
+        sats_decimal=amount*Decimal(100000000)
+        if not amount.is_finite() or sats_decimal!=sats_decimal.to_integral_value() or sats_decimal<546 or amount>Decimal("21000000"):
+            raise InvalidOperation()
+        amount_sats=int(sats_decimal)
+    except (InvalidOperation,ValueError,TypeError):
+        return jsonify(error="Betrag muss mindestens 0,00000546 BTC betragen und höchstens 8 Nachkommastellen haben."),400
+    with db() as c:
+        tracked=c.execute("SELECT 1 FROM tracked_wallets WHERE address=?",(source,)).fetchone()
+    if not tracked:
+        return jsonify(error="Die Quelladresse ist nicht in den eingetragenen Wallets vorhanden."),400
+    try:
+        info=bitcoin_rpc("getaddressinfo",[source])
+        if not isinstance(info,dict) or not info.get("ismine"):
+            return jsonify(error="Bitcoin Core bestätigt nicht, dass die Quelladresse zu deinem konfigurierten Wallet gehört. Eine nur beobachtete Adresse kann nicht ausgegeben werden."),409
+        utxos=bitcoin_rpc("listunspent",[1,9999999,[source]])
+        utxos=[u for u in (utxos or []) if u.get("address")==source and not u.get("spendable") is False]
+        if not utxos:
+            return jsonify(error="Keine bestätigten, ausgebbaren UTXOs für diese Quelladresse gefunden."),409
+        estimate=bitcoin_rpc("estimatesmartfee",[6,"ECONOMICAL"]) or {}
+        fee_rate=float(estimate.get("feerate") or 0.0001)
+        fee_rate=max(0.00001,min(fee_rate,0.01))
+        inputs=[{"txid":u["txid"],"vout":int(u["vout"])} for u in utxos]
+        output={destination:float(amount)}
+        funded=bitcoin_rpc("walletcreatefundedpsbt",[inputs,output,0,
+            {"changeAddress":source,"fee_rate":fee_rate,"lockUnspents":False},True])
+        psbt=funded.get("psbt")
+        if not psbt: raise RuntimeError("Bitcoin Core hat kein PSBT erstellt.")
+        proposal_id=secrets.token_urlsafe(18)
+        now=datetime.now(timezone.utc).isoformat()
+        fee=float(funded.get("fee") or 0)
+        with db() as c:
+            c.execute("""INSERT INTO bitcoin_payout_proposals
+                (id,source_address,destination_address,amount_sats,fee_btc,psbt,status,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,'pending',?,?)""",
+                (proposal_id,source,destination,amount_sats,fee,psbt,now,now))
+        return jsonify(ok=True,proposal_id=proposal_id,source_address=source,
+            destination_address=destination,amount_sats=amount_sats,amount_btc=format(amount,".8f"),
+            estimated_fee_btc=format(Decimal(str(fee)),".8f"),
+            estimated_total_btc=format(amount+Decimal(str(fee)),".8f"),
+            status="pending_confirmation",
+            warning="Prüfe Empfängeradresse, Betrag und Gebühr sorgfältig. Die Transaktion wird erst nach deiner separaten Bestätigung signiert und übertragen."),201
+    except requests.RequestException:
+        app.logger.warning("Bitcoin payout RPC unavailable")
+        return jsonify(error="Bitcoin-Core-RPC ist nicht erreichbar. Verbindung und Node-Status prüfen."),502
+    except (ValueError,TypeError,KeyError) as e:
+        app.logger.warning("Bitcoin payout preparation failed: %s",type(e).__name__)
+        return jsonify(error="Die Auszahlungsprüfung konnte nicht abgeschlossen werden."),502
+    except RuntimeError as e:
+        return jsonify(error=str(e)),503
+
+@app.post("/api/admin/payout/<proposal_id>/broadcast")
+@admin
+def admin_payout_broadcast(proposal_id):
+    origin=request.headers.get("Origin","")
+    if origin and origin.rstrip("/")!=request.host_url.rstrip("/"):
+        return jsonify(error="Ungültige Herkunft der Anfrage."),403
+    d=request.get_json(silent=True) or {}
+    if str(d.get("confirmation",""))!="AUSZAHLUNG BESTÄTIGEN":
+        return jsonify(error="Bitte die Bestätigungsphrase exakt eingeben."),400
+    with db() as c:
+        row=c.execute("SELECT * FROM bitcoin_payout_proposals WHERE id=?",(proposal_id,)).fetchone()
+    if not row or row["status"]!="pending":
+        return jsonify(error="Auszahlungsentwurf nicht gefunden oder bereits verarbeitet."),404
+    try:
+        signed=bitcoin_rpc("walletprocesspsbt",[row["psbt"],True,"ALL",True])
+        if not signed or not signed.get("complete") or not signed.get("psbt"):
+            return jsonify(error="Bitcoin Core konnte die Transaktion nicht vollständig signieren. Prüfe Wallet-Entsperrung und Schlüsselverfügbarkeit."),409
+        finalized=bitcoin_rpc("finalizepsbt",[signed["psbt"],True])
+        if not finalized or not finalized.get("complete") or not finalized.get("hex"):
+            return jsonify(error="Die signierte Transaktion konnte nicht finalisiert werden."),409
+        txid=bitcoin_rpc("sendrawtransaction",[finalized["hex"]])
+        now=datetime.now(timezone.utc).isoformat()
+        with db() as c:
+            c.execute("UPDATE bitcoin_payout_proposals SET status='broadcast',txid=?,updated_at=? WHERE id=? AND status='pending'",(txid,now,proposal_id))
+        return jsonify(ok=True,status="broadcast",txid=txid,
+            explorer_url="https://mempool.space/tx/"+str(txid),
+            note="Bitcoin Core hat die signierte Transaktion an das Netzwerk übermittelt. Bestätigungen sind anschließend im Explorer sichtbar.")
+    except requests.RequestException:
+        app.logger.warning("Bitcoin payout broadcast RPC unavailable")
+        return jsonify(error="Bitcoin-Core-RPC ist während der Signierung oder Übertragung nicht erreichbar. Vor einem erneuten Versuch zuerst die Transaktionshistorie des Nodes prüfen."),502
+    except (ValueError,TypeError,KeyError) as e:
+        app.logger.warning("Bitcoin payout broadcast failed: %s",type(e).__name__)
+        return jsonify(error="Die Auszahlung konnte nicht sicher abgeschlossen werden. Bitte den Node prüfen, bevor du erneut startest."),502
+    except RuntimeError as e:
+        return jsonify(error=str(e)),503
+
+@app.get("/api/admin/payout/history")
+@admin
+def admin_payout_history():
+    with db() as c:
+        rows=c.execute("""SELECT id,source_address,destination_address,amount_sats,fee_btc,status,txid,created_at,updated_at
+            FROM bitcoin_payout_proposals ORDER BY created_at DESC LIMIT 100""").fetchall()
+    return jsonify(items=[dict(x) for x in rows])
 
 
 _mining_ai_hits={}
