@@ -68,6 +68,11 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES member_profiles(id)
         );
         CREATE TABLE IF NOT EXISTS characters(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,role TEXT,traits TEXT,voice TEXT,background TEXT,created_at TEXT);
+        CREATE TABLE IF NOT EXISTS operator_settings(
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS connectors(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,base_url TEXT NOT NULL,auth_env TEXT,status TEXT DEFAULT 'planned',created_at TEXT);
         CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,url TEXT NOT NULL,owner_confirmed INTEGER,blueprint TEXT,created_at TEXT);
         CREATE TABLE IF NOT EXISTS platform_registry(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,url TEXT NOT NULL,category TEXT,description TEXT,created_at TEXT);
@@ -738,8 +743,14 @@ def chat():
             "Produktentwicklung, API-Integration, Webarchitektur, IP-Vorprüfung und Finanzmarkt-Compliance. Trenne Fakten, Annahmen und offene Punkte. "
             "Erfinde keine ausgeführten Aktionen, Quellen, API-Zugriffe oder Rechtsfreigaben. Frage vor externen, destruktiven oder kostenpflichtigen Aktionen nach Bestätigung. "
             "Respektiere Rechte an Webseiten, Datenbanken und Inhalten; kein Umgehen von Zugangsschutz. Finanz- und Patentinformationen sind keine Rechtsberatung.")
+    if not persona:
+        with db() as c:
+            selected=c.execute("SELECT setting_value FROM operator_settings WHERE setting_key='shared_character_id'").fetchone()
+            if selected and str(selected["setting_value"]).isdigit():
+                persona_row=c.execute("SELECT name,role,traits,voice,background FROM characters WHERE id=?",(int(selected["setting_value"]),)).fetchone()
+                if persona_row: persona=dict(persona_row)
     if persona:
-        system += "\n\nVom Superadmin gewählte fiktionale Charakter-Persona: Name="+str(persona.get("name",""))[:80]+"; Rolle="+str(persona.get("role",""))[:160]+"; Eigenschaften="+str(persona.get("traits",""))[:1000]+"; Sprachstil="+str(persona.get("voice",""))[:500]+"; Hintergrund="+str(persona.get("background",""))[:1200]+". Bleibe in dieser Rolle, ohne Sicherheitsregeln zu überschreiben."
+        system += "\n\nVom Superadmin gewählte gemeinsame Charakter-Persona: Name="+str(persona.get("name",""))[:80]+"; Rolle="+str(persona.get("role",""))[:160]+"; Eigenschaften="+str(persona.get("traits",""))[:1000]+"; Sprachstil="+str(persona.get("voice",""))[:500]+"; Hintergrund="+str(persona.get("background",""))[:1200]+". Bleibe in dieser Rolle, ohne Sicherheitsregeln zu überschreiben."
     payload={"model":MODEL,"instructions":system,"input":prompt,"tools":[{"type":"web_search"}],"store":False}
     try:
         r=requests.post("https://api.openai.com/v1/responses",headers={"Authorization":"Bearer "+API_KEY,"Content-Type":"application/json"},json=payload,timeout=90)
@@ -758,6 +769,29 @@ def chat():
                                     citations.append({"url":url,"title":cite.get("title") or url})
         return jsonify(answer="\n".join(texts).strip(),citations=citations,model=obj.get("model",MODEL),response_id=obj.get("id"))
     except requests.RequestException: return jsonify(error="Verbindung zum KI-Dienst fehlgeschlagen."),502
+
+@app.route("/api/operator/shared-character",methods=["GET","POST"])
+@admin
+def operator_shared_character():
+    if request.method=="GET":
+        with db() as c:
+            row=c.execute("SELECT setting_value FROM operator_settings WHERE setting_key='shared_character_id'").fetchone()
+            items=c.execute("SELECT id,name,role,traits,voice,background FROM characters ORDER BY name").fetchall()
+        return jsonify(selected_character_id=int(row["setting_value"]) if row and str(row["setting_value"]).isdigit() else None,
+                       characters=[dict(x) for x in items])
+    data=request.get_json(silent=True) or {}
+    ident=data.get("character_id")
+    if ident in (None,"",0,"0"):
+        with db() as c: c.execute("DELETE FROM operator_settings WHERE setting_key='shared_character_id'")
+        return jsonify(ok=True,selected_character_id=None,note="Gemeinsame Charakter-Persona deaktiviert.")
+    try: ident=int(ident)
+    except (TypeError,ValueError): return jsonify(error="Ungültige Charakter-ID."),400
+    with db() as c:
+        if not c.execute("SELECT id FROM characters WHERE id=?",(ident,)).fetchone():
+            return jsonify(error="Charakter nicht gefunden."),404
+        c.execute("INSERT INTO operator_settings(setting_key,setting_value,updated_at) VALUES('shared_character_id',?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value,updated_at=excluded.updated_at",
+                  (str(ident),datetime.now(timezone.utc).isoformat()))
+    return jsonify(ok=True,selected_character_id=ident,note="Charakter als gemeinsame Aurealis-Persona gespeichert.")
 
 @app.route("/api/characters",methods=["GET","POST"])
 @admin
