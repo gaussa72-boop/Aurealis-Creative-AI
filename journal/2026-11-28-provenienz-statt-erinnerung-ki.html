@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#09111d">
+<title>Provenienz statt Erinnerung: Wie KI die Herkunft einer Aussage offenlegt | Technologisierte Einheit</title>
+<meta name="description" content="Tagesjournal vom 28. November 2026: Datenherkunft, Verarbeitungsschritte und Modellversionen nachvollziehbar dokumentieren, damit KI-Ausgaben prüfbar bleiben.">
+<meta name="keywords" content="Technologisierte Einheit, KI, Datenprovenienz, Data Lineage, Audit Trail, Modellversionierung, Nachvollziehbarkeit, digitale Zukunft, Wissenschaft">
+<style>
+:root{--bg:#09111d;--panel:#111c2a;--gold:#d9bb78;--ice:#8fe0ee;--text:#eaf0f3;--muted:#b8c5d0;--line:#8fe0ee44}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 82% 0%,#16344a 0,transparent 38%),radial-gradient(ellipse at 8% 80%,#17233a 0,transparent 34%),var(--bg);color:var(--text);font:16px/1.85 system-ui,-apple-system,Segoe UI,sans-serif}
+a{color:var(--ice)}.wrap{max-width:920px;margin:auto;padding:0 24px}header{padding:20px 0;border-bottom:1px solid var(--line);font:10px system-ui,sans-serif;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)}header a{color:var(--gold);text-decoration:none}
+.hero{padding:82px 0 52px}.eyebrow{font-size:10px;letter-spacing:.25em;text-transform:uppercase;color:var(--ice)}h1{font:500 clamp(40px,7vw,72px)/1.02 Georgia,serif;color:#f0dfb8;margin:18px 0;max-width:850px}.subtitle{font:italic 21px/1.5 Georgia,serif;color:#bde2e8;max-width:760px}.meta{margin-top:24px;color:var(--gold);font-size:10px;letter-spacing:.16em}
+.intro,.level{padding:24px 28px;margin:0 0 28px;background:linear-gradient(135deg,#121e2b,#0d1722);border:1px solid var(--line);border-radius:12px}
+.label{display:inline-block;font:10px system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;padding:5px 9px;border:1px solid var(--line);border-radius:20px;color:var(--ice);margin-bottom:12px}
+h2{font:500 29px/1.2 Georgia,serif;color:var(--gold);margin:48px 0 14px}h3{font-size:18px;color:#cce9ed;margin:25px 0 8px}p{margin:0 0 17px}ul{padding-left:22px;color:#d6e0e5}li{margin:8px 0}
+.callout{border-left:3px solid var(--gold);padding:16px 22px;background:#d9bb780c;color:#e7ddc6;margin:26px 0}
+table{width:100%;border-collapse:collapse;margin:20px 0;font-size:14px}th,td{border-bottom:1px solid #8fe0ee33;padding:11px;text-align:left;vertical-align:top}th{color:var(--gold)}
+footer{margin-top:48px;padding:28px 0 48px;border-top:1px solid var(--line);font:10px system-ui,sans-serif;letter-spacing:.13em;color:#aab9c5}.tags{font:11px/2 system-ui,sans-serif;color:var(--ice);margin-top:25px}
+@media(max-width:600px){.wrap{padding:0 18px}.hero{padding:60px 0 40px}.intro,.level{padding:20px}h2{font-size:26px}table{font-size:12px}}
+</style></head><body>
+<header><div class="wrap"><a href="/">✧ Technologisierte Einheit</a>　/　Tagesjournal · 28. November 2026</div></header>
+<main class="wrap">
+<section class="hero"><div class="eyebrow">Wissenschaft · Technologie · digitale Zukunft</div><h1>Provenienz statt Erinnerung: Wie KI die Herkunft einer Aussage offenlegt</h1><p class="subtitle">Eine verlässliche KI muss nicht nur sagen, was sie ausgibt. Sie sollte auch zeigen können, auf welchen Quellen, Verarbeitungsschritten und Modellständen die Ausgabe beruht.</p><div class="meta">TECHNOLOGISIERTE EINHEIT · TAGESJOURNAL 03</div></section>
+<section class="intro"><p><strong>Einleitung.</strong> Im letzten Beitrag ging es um die Unterscheidung zwischen null, fehlend und unbekannt. Der nächste Schritt lautet: Wenn ein System eine Aussage erzeugt, wie lässt sich nachvollziehen, woher sie stammt und was auf dem Weg mit ihr geschehen ist? Datenprovenienz und Data Lineage beschreiben die Herkunft und Verarbeitung von Informationen. Für KI-Anwendungen können sie helfen, Ergebnisse zu prüfen, Fehler einzugrenzen und Verantwortung zuzuordnen.</p><p>Dieser Beitrag trennt etablierte technische Praktiken, eine Architekturhypothese und ein fiktionales Zukunftsbild.</p></section>
+<section><h2>1. Eine Ausgabe ist nicht ihre eigene Quelle</h2>
+<p>Eine KI-Antwort kann mehrere Informationsschritte verbinden: eine ursprüngliche Datei, eine Extraktion, eine Bereinigung, eine Datenbankabfrage, einen Retrieval-Schritt, eine Modellversion und schließlich eine erzeugte Formulierung. Wenn nur die letzte Antwort gespeichert wird, bleibt unsichtbar, welche Teile aus Quellen stammen, welche transformiert wurden und welche das Modell neu formuliert oder erschlossen hat.</p>
+<p>Provenienz bedeutet deshalb nicht, dass jede Ausgabe automatisch wahr wird. Sie macht lediglich den Weg prüfbarer. Eine sauber dokumentierte falsche Quelle bleibt falsch – aber sie lässt sich leichter erkennen, korrigieren und aus nachfolgenden Prozessen ausschließen.</p>
+<div class="callout">Nachvollziehbarkeit ist kein Wahrheitsstempel. Sie ist die Möglichkeit, eine Aussage bis zu ihren überprüfbaren Ursprüngen zurückzuverfolgen.</div>
+</section>
+<section><h2>2. Belegte technische Grundlage: Herkunft und Verarbeitung dokumentieren</h2>
+<div class="level"><span class="label">Belegte technische Praxis</span>
+<p>In Datenplattformen wird Data Lineage verwendet, um Datenflüsse zwischen Quellen, Transformationen und Zielsystemen sichtbar zu machen. Audit-Logs halten ausgewählte Aktionen mit Zeitstempeln und Akteursinformationen fest. Versionsverwaltung kann dokumentieren, welche Code-, Konfigurations- oder Modellstände zu einem Ergebnis beigetragen haben.</p>
+<p>Diese Praktiken sind in Datenengineering, Softwarebetrieb und Compliance etabliert. Ihre konkrete Umsetzung ist je nach System unterschiedlich. Ein Log ist nur so nützlich wie seine Vollständigkeit, Integrität, Aufbewahrungsregeln und Zugriffssteuerung.</p>
+</div>
+<table><thead><tr><th>Element</th><th>Was es festhält</th><th>Prüffrage</th></tr></thead><tbody>
+<tr><td>Quellenreferenz</td><td>Datei, Datensatz, URL oder internes Dokument mit eindeutiger Kennung</td><td>Kann die Quelle erneut aufgerufen und geprüft werden?</td></tr>
+<tr><td>Transformation</td><td>Extraktion, Bereinigung, Filterung, Zusammenfassung oder Konvertierung</td><td>Welche Schritte haben den Inhalt verändert?</td></tr>
+<tr><td>Modellstand</td><td>Modellkennung, Version, Parameter und relevante Konfiguration</td><td>Mit welchem Systemzustand wurde die Ausgabe erzeugt?</td></tr>
+<tr><td>Kontext</td><td>Abfrage, freigegebene Dokumente und relevante Eingaben</td><td>Welche Informationen standen dem System tatsächlich zur Verfügung?</td></tr>
+<tr><td>Prüfung</td><td>Freigabe, Korrektur, Ablehnung oder menschliche Nachprüfung</td><td>Wer hat das Ergebnis geprüft und mit welchem Status?</td></tr>
+</tbody></table>
+</section>
+<section><h2>3. Ein praktikables Provenienzprotokoll</h2>
+<p>Ein kleines System muss nicht mit einem komplexen Wissensgraphen beginnen. Für jede wichtige Ausgabe kann ein strukturierter Datensatz genügen. Er sollte mindestens eine eindeutige Vorgangs-ID, Zeitstempel, Quellenkennungen, Transformationsschritte, Modellversion, Prüfergebnis und einen Hinweis auf Unsicherheiten enthalten.</p>
+<ul>
+<li>Originalquelle getrennt von abgeleiteten Texten speichern.</li>
+<li>Jede Transformation mit Version und Zeitpunkt dokumentieren.</li>
+<li>Fakten, Modellinterpretationen und generierte Formulierungen getrennt markieren.</li>
+<li>Fehlende oder nicht erreichbare Quellen ausdrücklich als solche kennzeichnen.</li>
+<li>Änderungen nachvollziehbar protokollieren, statt frühere Prüfschritte still zu überschreiben.</li>
+<li>Personenbezogene oder vertrauliche Daten nur so lange und so weit speichern, wie es erforderlich und rechtlich zulässig ist.</li>
+</ul>
+<p>Für Integrität können Prüfsummen helfen, nachträgliche Veränderungen an gespeicherten Dateien zu erkennen. Eine Prüfsumme belegt jedoch nicht, dass der Inhalt ursprünglich richtig oder vollständig war. Sie zeigt nur, ob die geprüften Bytes seit dem berechneten Zeitpunkt verändert wurden.</p>
+</section>
+<section><h2>4. Hypothese: Ein Provenienzgraph für KI-Agenten</h2>
+<div class="level"><span class="label">Architekturhypothese</span>
+<p>Eine mögliche Weiterentwicklung ist ein Provenienzgraph, der nicht nur Dateien, sondern auch Aussagen und ihre Beziehungen modelliert. Eine Aussage könnte auf mehrere Quellen verweisen; jede Quelle hätte einen eigenen Status. Eine KI-Ausgabe würde dann sichtbar machen, welche Teile direkt belegt, aus mehreren Quellen zusammengeführt, vom Modell erschlossen oder noch ungeprüft sind.</p>
+<p>Die Hypothese lautet: Wenn Agenten ihre Informationswege in einer einheitlichen, maschinenlesbaren Struktur offenlegen, können Prüfungen über mehrere Anwendungen hinweg leichter automatisiert werden. Das könnte Fehler schneller lokalisieren und die Weitergabe ungesicherter Behauptungen begrenzen.</p>
+<p>Offen bleiben dabei wichtige Fragen: Wie verhindert man, dass der Graph selbst falsche Beziehungen enthält? Wie geht man mit widersprüchlichen Quellen um? Wie schützt man vertrauliche Daten, wenn ihre Herkunft sichtbar bleiben soll? Ein Provenienzgraph wäre daher kein Ersatz für fachliche Prüfung, Datenschutz oder menschliche Verantwortung.</p>
+</div>
+</section>
+<section><h2>5. Fiktion: Das Mnemion von Seryth</h2>
+<div class="level"><span class="label">Fiktion · Ate-Rea-Universum</span>
+<p>In der neuen Nachtchronik begegnet die Marevane dem Mnemion, einem uralten Instrument, das Lichtspuren und freiwillige Zeugnisse in erzählbare Muster übersetzt. Das Gerät bewahrt nicht nur eine Aussage, sondern auch ihre Herkunft und die Grenzen ihrer Weitergabe. Es unterscheidet zwischen beobachtet, überliefert, interpretiert und unbekannt.</p>
+<p>Das Mnemion ist keine reale Technologie und kein Beleg für ein kosmisches Gedächtnis. Als literarisches Modell zeigt es eine einfache Idee: Eine Information kann wertvoll sein, ohne dass sie vollständig rekonstruiert werden muss. Die Herkunft einer Erinnerung gehört zu ihrer Bedeutung.</p>
+<p><a href="https://ate-rea-vermachtnis.onrender.com/geschichten/2026-11-28-der-stern-der-sich-erinnerte.html">Die zugehörige Ate-Rea-Nachtchronik lesen ↗</a></p>
+</div>
+</section>
+<section><h2>6. Umsetzung in einer digitalen Zukunft</h2>
+<p>Für ein KI-Produkt lässt sich ein realistischer erster Schritt in drei Ebenen aufteilen: Quellenregister, Verarbeitungshistorie und Prüfstatus. Eine Benutzeroberfläche könnte neben einer Antwort eine kompakte Quellenkarte anzeigen. Administratoren könnten bei Bedarf den vollständigen Ablauf prüfen. Nutzende sollten erkennen können, ob eine Aussage auf einem Originaldokument, einer Zusammenfassung oder einer Modellannahme beruht.</p>
+<p>Wichtig ist, dass diese Transparenz nicht zur Überwachung wird. Nicht jede Eingabe muss dauerhaft gespeichert werden. Ein verantwortungsvolles System legt offen, welche Metadaten es protokolliert, wer sie sehen darf und wann sie gelöscht werden. Nachvollziehbarkeit und Datensparsamkeit müssen gemeinsam entworfen werden.</p>
+</section>
+<section><h2>Fazit</h2>
+<p>Eine KI sollte nicht so tun, als erinnere sie sich wie ein Mensch. Sie kann jedoch Herkunft, Kontext und Verarbeitungsschritte dokumentieren. Dadurch wird aus einer bloßen Ausgabe ein prüfbarer Vorgang. Provenienz ersetzt keine Wahrheit, aber sie macht es leichter, zwischen Quelle, Schlussfolgerung und Erfindung zu unterscheiden.</p>
+<p class="tags">#TechnologisierteEinheit #KI #Datenprovenienz #DataLineage #AuditTrail #Modellversionierung #Nachvollziehbarkeit #DigitaleZukunft #Wissenschaft #AteRea</p>
+</section>
+</main><footer><div class="wrap">TECHNOLOGISIERTE EINHEIT · WISSENSCHAFT · TECHNOLOGIE · DIGITALE ZUKUNFT</div></footer></body></html>
