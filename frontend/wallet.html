@@ -43,6 +43,13 @@
  <div id="superadmin-status" class="message" aria-live="polite">Nicht angemeldet.</div>
  <div id="payout-config" hidden>
   <div class="notice" id="payout-config-note"></div>
+  <section class="card" style="margin:14px 0;padding:14px">
+   <div class="eyebrow">WALLET-RECHTE & KONTROLLE</div><h3>Hinterlegte Wallets kontrollieren</h3>
+   <p class="muted">Zeigt ausschließlich den vom verbundenen Bitcoin-Core-Node bestätigten Eigentums-/Beobachterstatus, UTXOs und tatsächliche Ausgabeberechtigung. Öffentliche Adressen allein verleihen keine Kontrolle.</p>
+   <button class="btn" id="wallet-control-refresh" type="button">Wallet-Berechtigungen prüfen</button>
+   <div id="wallet-control-status" class="message" aria-live="polite">Noch nicht geprüft.</div>
+   <div id="wallet-control-results"></div>
+  </section>
   <form id="payout-form" class="membership-form">
    <div class="field"><label for="payout-source">Quellwallet (eingetragene Adresse)</label><select id="payout-source" required></select></div>
    <div class="field"><label for="payout-destination">Empfängeradresse</label><input id="payout-destination" autocomplete="off" spellcheck="false" placeholder="bc1… / 1… / 3…" required></div>
@@ -151,9 +158,37 @@ card.append(payoutPanel);
 const txbox=el("div","wallet-tx");txbox.append(el("div","label","LETZTE TRANSAKTIONEN"));if(!w.history||!w.history.length)txbox.append(el("div","empty","Keine Transaktionen gefunden."));else w.history.forEach(t=>{const row=el("div","tx");const a=el("a","",t.txid.slice(0,18)+"…"+t.txid.slice(-8));a.href="https://mempool.space/tx/"+encodeURIComponent(t.txid);a.target="_blank";a.rel="noopener noreferrer";const s=el("span","status",t.confirmed?"Bestätigt · Block "+t.block_height:"Ausstehend");row.append(a,s);txbox.append(row)});card.append(txbox);return card}
 
 let payoutProposal=null;
+
+async function loadWalletControl(){
+ const status=$("wallet-control-status"),box=$("wallet-control-results"),button=$("wallet-control-refresh");
+ button.disabled=true;status.textContent="Prüfe Berechtigungen direkt beim verbundenen Bitcoin-Core-Node …";box.replaceChildren();
+ try{
+  const d=await api("/api/admin/wallets/control");
+  if(!d.configured){status.textContent="Nicht verfügbar: Bitcoin-Core-RPC ist noch nicht konfiguriert.";return}
+  if(!d.connected){status.textContent=d.message||"Node-Verbindung fehlgeschlagen.";return}
+  status.textContent="Node verbunden · Netzwerk: "+d.network+" · Blockhöhe: "+(d.block_height??"–")+(d.network_ok?"":" · NETZWERK-KONFLIKT – keine Auszahlung möglich");
+  (d.items||[]).forEach(w=>{
+   const card=el("article","wallet-card"),head=el("div","wallet-head"),name=el("b","",w.label||"Wallet"),badge=el("span","status",w.status||w.ownership);
+   head.append(name,badge);card.append(head,el("div","wallet-address",w.address));
+   const controlled=w.ownership==="controlled",watch=w.ownership==="watch-only";
+   card.append(el("p","small",controlled?"Bitcoin Core ordnet diese Adresse deinem verbundenen Node-Wallet zu.":watch?"Diese Adresse ist nur als Watch-only hinterlegt. Guthaben und Transaktionen sind sichtbar, aber nicht mit diesem Wallet ausgebbar.":"Diese öffentliche Adresse ist in diesem Node-Wallet nicht als kontrollierte Adresse nachgewiesen."));
+   if(w.error)card.append(el("p","error",w.error));
+   const stats=el("div","wallet-stats");
+   stats.append(stat("BESTÄTIGTE UTXOs",btc(w.confirmed_sats||0)),stat("UNBESTÄTIGTE UTXOs",btc(w.unconfirmed_sats||0)),stat("AUSGABEFÄHIG",btc(w.spendable_balance_sats||0)),stat("UTXOs",String(w.utxo_count??0)));
+   card.append(stats);
+   const detail=el("p","small","Eigentum: "+(w.ismine?"Node-kontrolliert":watch?"Watch-only":"nicht nachgewiesen")+" · Spendable: "+(w.spendable?"Ja":"Nein")+" · Signierbar/solvable: "+(w.solvable?"Ja":"Nein")+" · Ausgebbare UTXOs: "+(w.spendable_utxo_count??0));
+   card.append(detail);
+   box.append(card);
+  });
+  if(!(d.items||[]).length)box.append(el("p","small","Keine eingetragenen Wallet-Adressen gefunden."));
+ }catch(e){status.textContent=e.message}
+ finally{button.disabled=false}
+}
+
 async function loadPayoutHistory(){try{const d=await api("/api/admin/payout/history");const box=$("payout-history");box.replaceChildren(el("b","","Letzte Auszahlungsentwürfe"));if(!d.items.length)box.append(el("p","small","Noch keine Auszahlungen."));d.items.forEach(x=>{const row=el("div","tx");const label=el("span","",btc(x.amount_sats)+" · "+x.status+" · "+x.destination_address.slice(0,16)+"…");row.append(label);if(x.txid){const a=el("a","","TXID ↗");a.href="https://mempool.space/tx/"+encodeURIComponent(x.txid);a.target="_blank";a.rel="noopener noreferrer";row.append(a)}box.append(row)})}catch(e){$("payout-history").textContent=e.message}}
 async function loadPayoutConfig(){const d=await api("/api/admin/payout/config");$("payout-config").hidden=false;const note=$("payout-config-note");note.textContent=d.configured?"Bitcoin-Core-RPC konfiguriert. Nur tatsächlich vom Node kontrollierte Quellwallets können ausgegeben werden.":"Auszahlung noch nicht aktiv: In Render müssen BITCOIN_RPC_URL, BITCOIN_RPC_USER, BITCOIN_RPC_PASSWORD und BITCOIN_RPC_WALLET als Environment-Variablen für einen eigenen Bitcoin-Core-Node gesetzt werden. Entfernte RPC-Verbindungen müssen HTTPS verwenden.";const select=$("payout-source");select.replaceChildren();(d.source_wallets||[]).forEach(w=>{const o=document.createElement("option");o.value=w.address;o.textContent=(w.label||"Wallet")+" · "+w.address.slice(0,14)+"…";select.append(o)});$("payout-form").querySelector("button").disabled=!d.configured||!d.source_wallets.length;await loadPayoutHistory()}
-$("superadmin-login").addEventListener("submit",async e=>{e.preventDefault();const status=$("superadmin-status");status.textContent="Prüfe Superadmin-Zugang …";try{await api("/api/login",{password:$("superadmin-password").value});$("superadmin-password").value="";status.textContent="Superadmin angemeldet.";await loadPayoutConfig()}catch(err){status.textContent=err.message}});
+$("superadmin-login").addEventListener("submit",async e=>{e.preventDefault();const status=$("superadmin-status");status.textContent="Prüfe Superadmin-Zugang …";try{await api("/api/login",{password:$("superadmin-password").value});$("superadmin-password").value="";status.textContent="Superadmin angemeldet.";await loadPayoutConfig();await loadWalletControl()}catch(err){status.textContent=err.message}});
+$("wallet-control-refresh").addEventListener("click",loadWalletControl);
 $("payout-form").addEventListener("submit",async e=>{e.preventDefault();const button=$("payout-form").querySelector("button");button.disabled=true;try{const d=await api("/api/admin/payout/prepare",{source_address:$("payout-source").value,destination_address:$("payout-destination").value.trim(),amount_btc:$("payout-amount").value.trim()});payoutProposal=d.proposal_id;const box=$("payout-review");box.hidden=false;box.replaceChildren(el("b","","Auszahlung prüfen und bestätigen"),el("p","","Von: "+d.source_address),el("p","","An: "+d.destination_address),el("p","","Betrag: "+d.amount_btc+" BTC"),el("p","","Geschätzte Netzwerkgebühr: "+d.estimated_fee_btc+" BTC"),el("p","","Gesamtbedarf: "+d.estimated_total_btc+" BTC"),el("p","small","Die Signierung und Übertragung erfolgt erst nach deiner ausdrücklichen Bestätigung."));const phrase=document.createElement("input");phrase.id="payout-confirmation";phrase.placeholder="AUSZAHLUNG BESTÄTIGEN";phrase.autocomplete="off";phrase.style.cssText="width:100%;padding:12px;border-radius:10px;border:1px solid #40516e;background:#080f1d;color:#fff;font:inherit;margin:8px 0";const send=el("button","btn primary","Jetzt signieren und übertragen");send.type="button";send.addEventListener("click",async()=>{if(!payoutProposal)return;send.disabled=true;try{const result=await api("/api/admin/payout/"+encodeURIComponent(payoutProposal)+"/broadcast",{confirmation:phrase.value});box.replaceChildren(el("b","","Transaktion übertragen"),el("p","","TXID: "+result.txid));const link=el("a","btn","Transaktion im Explorer öffnen ↗");link.href=result.explorer_url;link.target="_blank";link.rel="noopener noreferrer";box.append(link);payoutProposal=null;$("payout-amount").value="";await loadPayoutHistory()}catch(err){box.append(el("p","error",err.message));send.disabled=false}});box.append(phrase,send)}catch(err){$("payout-review").hidden=false;$("payout-review").textContent=err.message}finally{button.disabled=false}});
 
 async function load(){const list=$("wallet-list");list.replaceChildren(el("div","loading","Lade Blockchain-Daten für alle Wallets …"));$("refresh").disabled=true;try{const d=await api("/api/wallets");const t=d.totals||{};$("total-balance").textContent=btc(t.confirmed_balance_sats);$("total-sats").textContent=sats(t.confirmed_balance_sats);$("total-received").textContent=btc(t.confirmed_received_sats);$("total-spent").textContent=btc(t.confirmed_spent_sats);list.replaceChildren();if(!d.items.length)list.append(el("div","empty","Noch keine Wallets eingetragen."));else d.items.forEach(w=>list.append(renderWallet(w)));const source=$("payout-source");if(source){const previous=source.value;source.replaceChildren();d.items.forEach(w=>{const o=document.createElement("option");o.value=w.address;o.textContent=(w.label||"Wallet")+" · "+w.address.slice(0,14)+"…";source.append(o)});if(previous)source.value=previous} $("last-update").textContent="Zuletzt aktualisiert: "+new Date().toLocaleString("de-DE")}catch(e){list.replaceChildren(el("div","error",e.message))}finally{$("refresh").disabled=false}}
