@@ -238,6 +238,59 @@ def bitcoin_rpc(method, params=None):
         raise RuntimeError("Bitcoin Core: "+str(err.get("message","RPC-Fehler"))[:240])
     return payload.get("result")
 
+
+@app.get("/api/admin/wallets/control")
+@admin
+def admin_wallet_control():
+    with db() as c:
+        rows=c.execute("SELECT address,label,created_at FROM tracked_wallets ORDER BY created_at ASC").fetchall()
+    configured=all(os.getenv(k,"").strip() for k in ("BITCOIN_RPC_URL","BITCOIN_RPC_USER","BITCOIN_RPC_PASSWORD","BITCOIN_RPC_WALLET"))
+    if not configured:
+        return jsonify(configured=False,items=[],message="Bitcoin-Core-RPC ist noch nicht konfiguriert.")
+    try:
+        chain=bitcoin_rpc("getblockchaininfo") or {}
+        network=chain.get("chain","unknown")
+        expected=os.getenv("BITCOIN_NETWORK","mainnet").strip().lower()
+        network_ok=(network=="main" if expected=="mainnet" else network==expected)
+    except (requests.RequestException,RuntimeError,ValueError,TypeError):
+        return jsonify(configured=True,connected=False,items=[],message="Bitcoin Core ist nicht erreichbar oder die RPC-Anmeldung ist fehlgeschlagen."),502
+    items=[]
+    for row in rows:
+        item={"address":row["address"],"label":row["label"],"network":network,"network_ok":network_ok,
+              "ownership":"unknown","spendable":False,"watch_only":False,"confirmed_sats":0,
+              "unconfirmed_sats":0,"utxo_count":0,"spendable_utxo_count":0}
+        if not network_ok:
+            item["error"]="Node-Netzwerk stimmt nicht mit BITCOIN_NETWORK="+expected+" überein."
+            items.append(item); continue
+        try:
+            info=bitcoin_rpc("getaddressinfo",[row["address"]]) or {}
+            item["ismine"]=bool(info.get("ismine"))
+            item["watch_only"]=bool(info.get("iswatchonly"))
+            item["solvable"]=bool(info.get("solvable"))
+            item["spendable"]=bool(info.get("spendable"))
+            item["ownership"]="controlled" if item["ismine"] else ("watch-only" if item["watch_only"] else "not-in-wallet")
+            utxos=bitcoin_rpc("listunspent",[0,9999999,[row["address"]],True]) or []
+            utxos=[u for u in utxos if u.get("address")==row["address"]]
+            item["utxo_count"]=len(utxos)
+            item["confirmed_sats"]=sum(int(round(float(u.get("amount",0))*100000000)) for u in utxos if int(u.get("confirmations",0))>0)
+            item["unconfirmed_sats"]=sum(int(round(float(u.get("amount",0))*100000000)) for u in utxos if int(u.get("confirmations",0))<=0)
+            item["spendable_utxo_count"]=sum(1 for u in utxos if u.get("spendable") is True)
+            item["spendable_balance_sats"]=sum(int(round(float(u.get("amount",0))*100000000)) for u in utxos if u.get("spendable") is True)
+            item["solvable_utxo_count"]=sum(1 for u in utxos if u.get("solvable") is True)
+            item["status"]="Ausgabefähig" if item["spendable"] and item["spendable_utxo_count"] else ("Nur Beobachtung" if item["watch_only"] else ("Kontrolliert, kein ausgebbarer Bestand" if item["ismine"] else "Nicht in diesem Node-Wallet"))
+        except RuntimeError as e:
+            msg=str(e)
+            item["ownership"]="not-in-wallet"
+            item["status"]="Nicht kontrolliert"
+            item["error"]=msg[:180]
+        except (requests.RequestException,ValueError,TypeError,KeyError):
+            item["status"]="Prüfung fehlgeschlagen"
+            item["error"]="Wallet-Status konnte nicht sicher abgefragt werden."
+        items.append(item)
+    return jsonify(configured=True,connected=True,network=network,network_ok=network_ok,
+        block_height=chain.get("blocks"),items=items,
+        note="Kontrolliert bedeutet, dass Bitcoin Core die Adresse seinem Wallet zuordnet. Ausgabefähig wird separat anhand von spendable und verfügbaren UTXOs geprüft.")
+
 @app.get("/api/admin/payout/config")
 @admin
 def admin_payout_config():
